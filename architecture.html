@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>竞品动态监控 Agent - 系统架构</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-deep: #0a0e1a;
+  --bg-card: rgba(15, 23, 42, 0.7);
+  --bg-card-hover: rgba(20, 30, 55, 0.85);
+  --neon-cyan: #00f0ff;
+  --neon-pink: #ff2d8a;
+  --neon-green: #39ff14;
+  --neon-purple: #a855f7;
+  --neon-amber: #f59e0b;
+  --text-primary: #e2e8f0;
+  --text-muted: #64748b;
+  --border-glow: rgba(0, 240, 255, 0.15);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Space Grotesk', 'Noto Sans SC', sans-serif;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  overflow-x: hidden;
+  line-height: 1.7;
+}
+code, .mono { font-family: 'JetBrains Mono', monospace; }
+
+/* Noise overlay */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 9999;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+}
+
+/* Progress bar */
+#progress-bar {
+  position: fixed; top: 0; left: 0; height: 2px; z-index: 10000;
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink));
+  width: 0%; transition: width 0.1s;
+}
+
+/* Glow effects */
+.glow-cyan { text-shadow: 0 0 20px rgba(0, 240, 255, 0.5); }
+.glow-pink { text-shadow: 0 0 20px rgba(255, 45, 138, 0.5); }
+.glow-box {
+  border: 1px solid var(--border-glow);
+  box-shadow: 0 0 30px rgba(0, 240, 255, 0.05), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+.glow-box:hover {
+  border-color: rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 40px rgba(0, 240, 255, 0.1), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+/* Card */
+.card {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  padding: 2rem;
+  transition: all 0.3s ease;
+}
+.card:hover { background: var(--bg-card-hover); transform: translateY(-2px); }
+
+/* Flow connector */
+.flow-line {
+  width: 2px; background: linear-gradient(180deg, var(--neon-cyan), transparent);
+}
+.flow-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--neon-cyan);
+  box-shadow: 0 0 12px var(--neon-cyan);
+}
+
+/* Tag */
+.tag {
+  display: inline-block; padding: 2px 10px;
+  border-radius: 999px; font-size: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Section */
+section { position: relative; }
+.section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--neon-cyan); opacity: 0.7;
+}
+
+/* Mesh gradient background */
+.mesh-bg {
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(0, 240, 255, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(168, 85, 247, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(255, 45, 138, 0.04) 0%, transparent 50%);
+}
+
+/* Architecture diagram styles */
+.arch-node {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid;
+  border-radius: 12px;
+  padding: 1.2rem 1.5rem;
+  text-align: center;
+  transition: all 0.3s;
+  position: relative;
+}
+.arch-node:hover { transform: scale(1.03); }
+
+.arch-arrow {
+  color: var(--neon-cyan); font-size: 1.5rem;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-deep); }
+::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.3); border-radius: 3px; }
+
+@media (max-width: 768px) {
+  .card { padding: 1.2rem; }
+  .arch-node { padding: 0.8rem; font-size: 0.85rem; }
+}
+</style>
+</head>
+<body>
+<!-- Progress bar -->
+<div id="progress-bar"></div>
+
+<!-- ======== HERO ======== -->
+<section class="min-h-screen flex items-center justify-center mesh-bg relative px-4">
+  <div class="absolute inset-0 overflow-hidden">
+    <div class="absolute w-96 h-96 rounded-full bg-cyan-500/5 blur-3xl -top-20 -left-20"></div>
+    <div class="absolute w-80 h-80 rounded-full bg-pink-500/5 blur-3xl bottom-10 right-10"></div>
+  </div>
+  <div class="relative z-10 text-center max-w-4xl mx-auto" id="hero-content">
+    <div class="section-label mb-6">Competitor Intelligence Agent</div>
+    <h1 class="text-5xl md:text-7xl font-bold mb-6 leading-tight">
+      <span class="glow-cyan">竞品动态</span><br>
+      <span class="bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+        监控 Agent
+      </span>
+    </h1>
+    <p class="text-lg md:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+      基于 LangGraph 工作流引擎，集成多源数据采集、LLM 智能分析、<br class="hidden md:inline">
+      自动化报告生成与多平台群机器人推送的端到端竞品监控系统
+    </p>
+    <div class="flex flex-wrap gap-3 justify-center mb-12">
+      <span class="tag bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">LangGraph</span>
+      <span class="tag bg-purple-500/10 text-purple-400 border border-purple-500/20">TikHub API</span>
+      <span class="tag bg-pink-500/10 text-pink-400 border border-pink-500/20">LLM Analysis</span>
+      <span class="tag bg-green-500/10 text-green-400 border border-green-500/20">Web Scraping</span>
+      <span class="tag bg-amber-500/10 text-amber-400 border border-amber-500/20">GitHub Monitor</span>
+      <span class="tag bg-rose-500/10 text-rose-400 border border-rose-500/20">APScheduler</span>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+      <div class="card glow-box">
+        <div class="text-3xl font-bold glow-cyan mono">16+</div>
+        <div class="text-sm text-slate-400 mt-1">数据源平台</div>
+      </div>
+      <div class="card glow-box">
+        <div class="text-3xl font-bold glow-pink mono">5</div>
+        <div class="text-sm text-slate-400 mt-1">核心工作流节点</div>
+      </div>
+      <div class="card glow-box">
+        <div class="text-3xl font-bold" style="color: var(--neon-green)">3</div>
+        <div class="text-sm text-slate-400 mt-1">机器人推送渠道</div>
+      </div>
+      <div class="card glow-box">
+        <div class="text-3xl font-bold" style="color: var(--neon-purple)">2</div>
+        <div class="text-sm text-slate-400 mt-1">MVP 竞品目标</div>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- ======== ARCHITECTURE FLOW ======== -->
+<section class="py-24 px-4 mesh-bg" id="architecture">
+  <div class="max-w-6xl mx-auto">
+    <div class="section-label mb-3">System Architecture</div>
+    <h2 class="text-3xl md:text-4xl font-bold mb-4">核心工作流架构</h2>
+    <p class="text-slate-400 mb-16 max-w-2xl">
+      Agent 基于 LangGraph StateGraph 设计，将采集、去重、分析、报告、推送五个核心步骤组织为有向图，
+      支持并行采集与条件分支。
+    </p>
+
+    <!-- Architecture Diagram -->
+    <div class="card glow-box p-8 mb-16 overflow-x-auto" id="arch-diagram">
+      <div class="min-w-[800px]">
+        <!-- Row 1: Data Sources -->
+        <div class="text-xs mono text-slate-500 mb-3 tracking-wider">DATA COLLECTORS</div>
+        <div class="grid grid-cols-5 gap-4 mb-6">
+          <div class="arch-node border-green-500/40" style="border-color: rgba(57,255,20,0.3);">
+            <div class="text-2xl mb-2">🌐</div>
+            <div class="font-semibold text-sm">WebScraper</div>
+            <div class="text-xs text-slate-500 mt-1">官网 / 博客 / 新闻</div>
+            <div class="tag bg-green-500/10 text-green-400 mt-2 text-xs">httpx + bs4</div>
+          </div>
+          <div class="arch-node border-cyan-500/40" style="border-color: rgba(0,240,255,0.3);">
+            <div class="text-2xl mb-2">📱</div>
+            <div class="font-semibold text-sm">TikHubClient</div>
+            <div class="text-xs text-slate-500 mt-1">微博 / 小红书 / B站 / 知乎 / X / YT / Reddit / IG</div>
+            <div class="tag bg-cyan-500/10 text-cyan-400 mt-2 text-xs">TikHub API</div>
+          </div>
+          <div class="arch-node border-purple-500/40" style="border-color: rgba(168,85,247,0.3);">
+            <div class="text-2xl mb-2">🐙</div>
+            <div class="font-semibold text-sm">GitHubCollector</div>
+            <div class="text-xs text-slate-500 mt-1">Release / Issue / PR</div>
+            <div class="tag bg-purple-500/10 text-purple-400 mt-2 text-xs">PyGithub</div>
+          </div>
+          <div class="arch-node border-slate-500/20" style="border-color: rgba(100,116,139,0.3); opacity: 0.5;">
+            <div class="text-2xl mb-2">📡</div>
+            <div class="font-semibold text-sm">RSSCollector</div>
+            <div class="text-xs text-slate-500 mt-1">RSS 订阅源</div>
+            <div class="tag bg-slate-500/10 text-slate-400 mt-2 text-xs">v2 计划</div>
+          </div>
+          <div class="arch-node border-slate-500/20" style="border-color: rgba(100,116,139,0.3); opacity: 0.5;">
+            <div class="text-2xl mb-2">💬</div>
+            <div class="font-semibold text-sm">DiscordCollector</div>
+            <div class="text-xs text-slate-500 mt-1">Discord 频道</div>
+            <div class="tag bg-slate-500/10 text-slate-400 mt-2 text-xs">v2 计划</div>
+          </div>
+        </div>
+
+        <!-- Arrows down -->
+        <div class="flex justify-center mb-6">
+          <div class="flex items-center gap-2">
+            <div class="w-20 h-px bg-gradient-to-r from-transparent to-cyan-500/50"></div>
+            <div class="text-cyan-400 text-lg">▼</div>
+            <div class="text-xs mono text-slate-500 mx-4">asyncio.gather(并行采集)</div>
+            <div class="text-cyan-400 text-lg">▼</div>
+            <div class="w-20 h-px bg-gradient-to-l from-transparent to-cyan-500/50"></div>
+          </div>
+        </div>
+
+        <!-- Row 2: Processing Pipeline -->
+        <div class="text-xs mono text-slate-500 mb-3 tracking-wider">PROCESSING PIPELINE (LangGraph StateGraph)</div>
+        <div class="grid grid-cols-5 gap-3">
+          <div class="arch-node bg-green-950/30" style="border-color: rgba(57,255,20,0.4);">
+            <div class="text-xs text-green-400 font-bold mb-1">NODE 1</div>
+            <div class="font-bold">COLLECT</div>
+            <div class="text-xs text-slate-500 mt-1">并行多源采集</div>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node bg-cyan-950/30" style="border-color: rgba(0,240,255,0.4);">
+            <div class="text-xs text-cyan-400 font-bold mb-1">NODE 2</div>
+            <div class="font-bold">DEDUPLICATE</div>
+            <div class="text-xs text-slate-500 mt-1">URL + SQLite 去重</div>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node bg-pink-950/30" style="border-color: rgba(255,45,138,0.4);">
+            <div class="text-xs text-pink-400 font-bold mb-1">NODE 3</div>
+            <div class="font-bold">ANALYZE</div>
+            <div class="text-xs text-slate-500 mt-1">LLM 结构化分析</div>
+          </div>
+        </div>
+
+        <!-- Arrow -->
+        <div class="flex justify-center my-4">
+          <div class="flex items-center gap-2">
+            <div class="w-20 h-px bg-gradient-to-r from-transparent to-cyan-500/50"></div>
+            <div class="text-cyan-400 text-lg">▼</div>
+            <div class="text-xs mono text-slate-500 mx-4">条件分支: HIGH → 即时推送 | 其他 → 汇总</div>
+            <div class="text-cyan-400 text-lg">▼</div>
+            <div class="w-20 h-px bg-gradient-to-l from-transparent to-cyan-500/50"></div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-5 gap-3">
+          <div class="arch-node bg-purple-950/30" style="border-color: rgba(168,85,247,0.4);">
+            <div class="text-xs text-purple-400 font-bold mb-1">NODE 4</div>
+            <div class="font-bold">REPORT</div>
+            <div class="text-xs text-slate-500 mt-1">Markdown 周报渲染</div>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node bg-amber-950/30" style="border-color: rgba(245,158,11,0.4);">
+            <div class="text-xs text-amber-400 font-bold mb-1">NODE 5</div>
+            <div class="font-bold">NOTIFY</div>
+            <div class="text-xs text-slate-500 mt-1">多平台推送</div>
+          </div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-node bg-slate-900/50" style="border-color: rgba(100,116,139,0.4);">
+            <div class="text-xs text-slate-400 font-bold mb-1">PERSIST</div>
+            <div class="font-bold">STORE</div>
+            <div class="text-xs text-slate-500 mt-1">SQLite 持久化</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- State Diagram -->
+    <div class="grid md:grid-cols-2 gap-8">
+      <div class="card glow-box">
+        <h3 class="text-lg font-bold mb-4" style="color: var(--neon-cyan);">AgentState 数据结构</h3>
+        <pre class="mono text-xs text-slate-300 leading-relaxed overflow-x-auto"><code>class AgentState(BaseModel):
+    competitor_name: str        # 当前处理的竞品
+    raw_items: List[RawItem]    # 采集到的原始条目
+    analyzed_items: List[...]   # LLM 分析结果
+    weekly_report: WeeklyReport # 周报数据
+    alerts: List[AnalyzedItem]  # 需即时推送的高优条目
+    errors: List[str]           # 错误日志
+    run_id: str                 # 本次运行唯一 ID
+    started_at: datetime        # 启动时间</code></pre>
+      </div>
+      <div class="card glow-box">
+        <h3 class="text-lg font-bold mb-4" style="color: var(--neon-pink);">两种运行模式</h3>
+        <div class="space-y-4">
+          <div class="p-4 rounded-lg bg-green-500/5 border border-green-500/20">
+            <div class="font-semibold text-green-400 text-sm">weekly_report 模式</div>
+            <div class="text-xs text-slate-400 mt-1">
+              每周一 09:00 自动触发，采集一周内所有竞品动态，
+              经 LLM 分析后生成 Markdown 周报，推送到工作群。
+            </div>
+          </div>
+          <div class="p-4 rounded-lg bg-pink-500/5 border border-pink-500/20">
+            <div class="font-semibold text-pink-400 text-sm">realtime_alert 模式</div>
+            <div class="text-xs text-slate-400 mt-1">
+              每 2 小时轮询一次，检测到新内容后即时分析，
+              发现高优先级动态立即生成简报推送到群中。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- ======== TECH STACK ======== -->
+<section class="py-24 px-4" id="tech-stack">
+  <div class="max-w-6xl mx-auto">
+    <div class="section-label mb-3">Technology Stack</div>
+    <h2 class="text-3xl md:text-4xl font-bold mb-16">技术选型与框架</h2>
+
+    <div class="grid md:grid-cols-3 gap-6 mb-16">
+      <div class="card glow-box">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center text-lg">🔗</div>
+          <div>
+            <div class="font-bold">LangGraph</div>
+            <div class="text-xs text-slate-500">Agent 工作流引擎</div>
+          </div>
+        </div>
+        <p class="text-sm text-slate-400">
+          使用 StateGraph 定义采集→去重→分析→报告→推送的有向图工作流。
+          支持条件分支（高优→即时推送）、并行执行、状态持久化。
+          相比纯函数式 pipeline，LangGraph 提供更好的可调试性和可扩展性。
+        </p>
+      </div>
+      <div class="card glow-box">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center text-lg">🤖</div>
+          <div>
+            <div class="font-bold">LangChain + OpenAI API</div>
+            <div class="text-xs text-slate-500">LLM 调用层</div>
+          </div>
+        </div>
+        <p class="text-sm text-slate-400">
+          通过 langchain-openai 的 ChatOpenAI 类调用任意 OpenAI 兼容 API。
+          用户只需配置 <code class="text-cyan-400 text-xs">LLM_BASE_URL</code> 和
+          <code class="text-cyan-400 text-xs">LLM_API_KEY</code> 即可接入自选模型。
+        </p>
+      </div>
+      <div class="card glow-box">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center text-lg">⏰</div>
+          <div>
+            <div class="font-bold">APScheduler</div>
+            <div class="text-xs text-slate-500">定时任务调度</div>
+          </div>
+        </div>
+        <p class="text-sm text-slate-400">
+          基于 AsyncIOScheduler 实现异步定时任务。
+          CronTrigger 用于周报（每周一 09:00），
+          IntervalTrigger 用于实时监控轮询（每 2 小时）。
+          支持热重载和任务持久化。
+        </p>
+      </div>
+    </div>
+
+    <!-- Data collection layer -->
+    <h3 class="text-xl font-bold mb-8">数据采集层：三层数据源架构</h3>
+    <div class="grid md:grid-cols-3 gap-6">
+      <div class="card glow-box">
+        <div class="text-green-400 font-bold mb-3 mono text-sm">Layer 1: 直接爬取</div>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-green-400"></span>httpx (异步 HTTP)</div>
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-green-400"></span>BeautifulSoup (HTML 解析)</div>
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-green-400"></span>tenacity (自动重试)</div>
+        </div>
+        <div class="mt-4 text-xs text-slate-500">
+          适用：官网、博客、新闻网站、文档站点
+        </div>
+      </div>
+      <div class="card glow-box">
+        <div class="text-cyan-400 font-bold mb-3 mono text-sm">Layer 2: TikHub API</div>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-cyan-400"></span>16+ 社交平台覆盖</div>
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-cyan-400"></span>Bearer Token 认证</div>
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-cyan-400"></span>内置 QPS 限流 (10/s)</div>
+        </div>
+        <div class="mt-4 text-xs text-slate-500">
+          适用：微博、小红书、B站、知乎、X、YouTube、Reddit、Instagram 等有反爬的平台
+        </div>
+      </div>
+      <div class="card glow-box">
+        <div class="text-purple-400 font-bold mb-3 mono text-sm">Layer 3: GitHub API</div>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-purple-400"></span>PyGithub 库</div>
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-purple-400"></span>Release 跟踪</div>
+          <div class="flex items-center gap-2 text-sm"><span class="w-2 h-2 rounded-full bg-purple-400"></span>Issue/PR 趋势监控</div>
+        </div>
+        <div class="mt-4 text-xs text-slate-500">
+          适用：开源项目动态、SDK 更新、社区讨论
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- ======== TIKHUB INTEGRATION ======== -->
+<section class="py-24 px-4 mesh-bg" id="tikhub">
+  <div class="max-w-6xl mx-auto">
+    <div class="section-label mb-3">TikHub Integration</div>
+    <h2 class="text-3xl md:text-4xl font-bold mb-4">TikHub API 接口设计</h2>
+    <p class="text-slate-400 mb-12 max-w-3xl">
+      TikHub (tikhub.io) 提供 1000+ 端点覆盖 16 个社交媒体平台。本项目通过统一的
+      <code class="text-cyan-400 text-sm">TikHubClient</code> 封装，将各平台 API 返回的异构数据结构
+      标准化为 <code class="text-cyan-400 text-sm">RawItem</code> 模型。
+    </p>
+
+    <!-- API endpoint table -->
+    <div class="card glow-box overflow-x-auto mb-12">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-xs mono text-slate-500 border-b border-slate-700/50">
+            <th class="pb-3 pr-4">平台</th>
+            <th class="pb-3 pr-4">搜索端点</th>
+            <th class="pb-3 pr-4">MVP 用途</th>
+            <th class="pb-3">关键参数</th>
+          </tr>
+        </thead>
+        <tbody class="text-slate-300">
+          <tr class="border-b border-slate-800/50">
+            <td class="py-3 pr-4 font-semibold text-cyan-400">微博</td>
+            <td class="py-3 pr-4 mono text-xs">/api/v1/weibo/search_by_keyword</td>
+            <td class="py-3 pr-4 text-slate-400">WorkBuddy 舆情</td>
+            <td class="py-3 mono text-xs text-slate-500">keyword</td>
+          </tr>
+          <tr class="border-b border-slate-800/50">
+            <td class="py-3 pr-4 font-semibold text-pink-400">小红书</td>
+            <td class="py-3 pr-4 mono text-xs">/api/v1/xiaohongshu/app_v2/search_by_keyword</td>
+            <td class="py-3 pr-4 text-slate-400">WorkBuddy 用户体验反馈</td>
+            <td class="py-3 mono text-xs text-slate-500">keyword</td>
+          </tr>
+          <tr class="border-b border-slate-800/50">
+            <td class="py-3 pr-4 font-semibold text-blue-400">B站</td>
+            <td class="py-3 pr-4 mono text-xs">/api/v1/bilibili/web/search_by_keyword</td>
+            <td class="py-3 pr-4 text-slate-400">WorkBuddy 视频评测</td>
+            <td class="py-3 mono text-xs text-slate-500">keyword</td>
+          </tr>
+          <tr class="border-b border-slate-800/50">
+            <td class="py-3 pr-4 font-semibold text-purple-400">知乎</td>
+            <td class="py-3 pr-4 mono text-xs">/api/v1/zhihu/search_by_keyword</td>
+            <td class="py-3 pr-4 text-slate-400">WorkBuddy 深度讨论</td>
+            <td class="py-3 mono text-xs text-slate-500">keyword</td>
+          </tr>
+          <tr class="border-b border-slate-800/50">
+            <td class="py-3 pr-4 font-semibold text-sky-400">X / Twitter</td>
+            <td class="py-3 pr-4 mono text-xs">/api/v1/twitter/web/search_by_keyword</td>
+            <td class="py-3 pr-4 text-slate-400">Claude AI 海外动态</td>
+            <td class="py-3 mono text-xs text-slate-500">keyword</td>
+          </tr>
+          <tr class="border-b border-slate-800/50">
+            <td class="py-3 pr-4 font-semibold text-red-400">YouTube</td>
+            <td class="py-3 pr-4 mono text-xs">/api/v1/youtube/web/search_by_keyword</td>
+            <td class="py-3 pr-4 text-slate-400">Claude AI 视频评测</td>
+            <td class="py-3 mono text-xs text-slate-500">keyword</td>
+          </tr>
+          <tr class="border-b border-slate-800/50">
+            <td class="py-3 pr-4 font-semibold text-orange-400">Reddit</td>
+            <td class="py-3 pr-4 mono text-xs">/api/v1/reddit/web/search_by_keyword</td>
+            <td class="py-3 pr-4 text-slate-400">r/ClaudeAI 社区动态</td>
+            <td class="py-3 mono text-xs text-slate-500">keyword, subreddit</td>
+          </tr>
+          <tr>
+            <td class="py-3 pr-4 font-semibold text-rose-400">Instagram</td>
+            <td class="py-3 pr-4 mono text-xs">/api/v1/instagram/web/search_by_keyword</td>
+            <td class="py-3 pr-4 text-slate-400">Anthropic 品牌动态</td>
+            <td class="py-3 mono text-xs text-slate-500">keyword</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Request/Response diagram -->
+    <div class="grid md:grid-cols-2 gap-8">
+      <div class="card glow-box">
+        <h4 class="font-bold text-sm mb-3" style="color: var(--neon-green);">请求流程</h4>
+        <pre class="mono text-xs text-slate-300 leading-relaxed overflow-x-auto"><code># TikHubClient._request()
+GET {base_url}{endpoint}?{params}
+
+Headers:
+  Authorization: Bearer {TIKHUB_API_TOKEN}
+  Accept: application/json
+
+限流: Semaphore(qps=10)
+重试: @retry(stop=3, wait=exp(2,20))</code></pre>
+      </div>
+      <div class="card glow-box">
+        <h4 class="font-bold text-sm mb-3" style="color: var(--neon-pink);">数据标准化</h4>
+        <pre class="mono text-xs text-slate-300 leading-relaxed overflow-x-auto"><code># 各平台异构 JSON → 统一 RawItem
+TikHub API Response:
+  {code, data: [...], message}
+      ↓
+_parse_single_record(record, platform)
+  平台特定字段映射
+  (url, title, author, time)
+      ↓
+RawItem(
+  url, title, content_snippet,
+  author, published_at, raw_metadata
+)</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- ======== WORKFLOW DETAIL CHART ======== -->
+<section class="py-24 px-4" id="workflow">
+  <div class="max-w-6xl mx-auto">
+    <div class="section-label mb-3">Data Flow Visualization</div>
+    <h2 class="text-3xl md:text-4xl font-bold mb-16">数据流转全景</h2>
+    <div class="card glow-box p-6">
+      <div id="flow-chart" style="width: 100%; height: 420px;"></div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-8 mt-12">
+      <div class="card glow-box">
+        <h4 class="font-bold mb-4" style="color: var(--neon-cyan);">LLM 分析 Prompt 设计</h4>
+        <div class="space-y-3 text-sm text-slate-400">
+          <p><strong class="text-slate-200">System Prompt：</strong>定义为专业竞品分析师角色，要求以 JSON 格式返回结构化分析结果，包含 content_type、priority、summary、key_signals、potential_impact、recommended_actions 六个字段。</p>
+          <p><strong class="text-slate-200">User Prompt：</strong>注入竞品名称、来源渠道、标题、内容摘要作为上下文。</p>
+          <p><strong class="text-slate-200">降级策略：</strong>LLM 调用失败时自动切换为 fallback 分析（仅提取基础信息，标记为待人工审核）。</p>
+        </div>
+      </div>
+      <div class="card glow-box">
+        <h4 class="font-bold mb-4" style="color: var(--neon-pink);">消息推送架构</h4>
+        <div class="space-y-3 text-sm text-slate-400">
+          <p><strong class="text-green-400">企业微信：</strong>通过 Webhook 发送 Markdown 消息，支持 4096 字长文本自动截断。</p>
+          <p><strong class="text-blue-400">飞书：</strong>通过 Interactive Card 格式发送，支持富文本卡片样式。</p>
+          <p><strong class="text-amber-400">钉钉：</strong>通过加签 Webhook 发送，支持 HMAC-SHA256 安全签名。</p>
+          <p class="text-xs text-slate-500 mt-2">CompositeNotifier 自动检测已配置的渠道，同时向所有启用渠道推送。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======== FILE STRUCTURE ======== -->
+<section class="py-24 px-4 mesh-bg" id="structure">
+  <div class="max-w-6xl mx-auto">
+    <div class="section-label mb-3">Project Structure</div>
+    <h2 class="text-3xl md:text-4xl font-bold mb-12">项目目录结构</h2>
+
+    <div class="card glow-box">
+      <pre class="mono text-xs md:text-sm text-slate-300 leading-loose overflow-x-auto"><code><span class="text-cyan-400 font-bold">competitor-monitor/</span>
+├── <span class="text-amber-400">main.py</span>                    # 主入口 CLI（weekly / monitor / serve）
+├── <span class="text-amber-400">.env.example</span>               # 环境变量模板（LLM key、TikHub token 等）
+├── <span class="text-amber-400">requirements.txt</span>           # Python 依赖
+│
+├── <span class="text-cyan-400 font-bold">config/</span>                    # 配置模块
+│   ├── <span class="text-green-400">settings.py</span>            # 全局配置加载（Pydantic BaseModel）
+│   └── <span class="text-green-400">competitors.py</span>         # 竞品监控目标配置（WorkBuddy + Claude）
+│
+├── <span class="text-cyan-400 font-bold">collectors/</span>                # 数据采集层
+│   ├── <span class="text-purple-400">base.py</span>                # 采集器基类（ABC + safe_collect）
+│   ├── <span class="text-purple-400">web_scraper.py</span>         # 通用网页爬取器（httpx + bs4）
+│   ├── <span class="text-purple-400">tikhub_client.py</span>       # TikHub API 客户端（16+ 平台）
+│   └── <span class="text-purple-400">github_collector.py</span>    # GitHub 仓库监控（PyGithub）
+│
+├── <span class="text-cyan-400 font-bold">analyzer/</span>                  # LLM 分析层
+│   └── <span class="text-pink-400">llm_analyzer.py</span>        # LLM 结构化分析 + 周报摘要生成
+│
+├── <span class="text-cyan-400 font-bold">reporter/</span>                  # 报告生成层
+│   └── <span class="text-rose-400">report_generator.py</span>    # Markdown 周报 + 即时简报模板
+│
+├── <span class="text-cyan-400 font-bold">notifier/</span>                  # 消息推送层
+│   └── <span class="text-amber-400">bot.py</span>                 # 企业微信 / 飞书 / 钉钉 Webhook
+│
+├── <span class="text-cyan-400 font-bold">storage/</span>                   # 数据持久化
+│   └── <span class="text-green-400">sqlite_storage.py</span>      # SQLite 存储（去重 + 历史查询）
+│
+├── <span class="text-cyan-400 font-bold">models/</span>                    # 数据模型
+│   └── <span class="text-blue-400">data_models.py</span>         # Pydantic 模型（RawItem, AnalyzedItem, WeeklyReport, AgentState）
+│
+├── <span class="text-cyan-400 font-bold">graph/</span>                     # Agent 工作流引擎
+│   ├── <span class="text-pink-400">agent_workflow.py</span>      # CompetitorMonitorAgent 核心引擎
+│   └── <span class="text-pink-400">scheduler.py</span>           # APScheduler 定时任务调度
+│
+├── <span class="text-slate-500">logs/</span>                      # 运行日志
+└── <span class="text-slate-500">data/</span>                      # SQLite 数据库文件</code></pre>
+    </div>
+  </div>
+</section>
+<!-- ======== DEPLOYMENT GUIDE ======== -->
+<section class="py-24 px-4" id="deploy">
+  <div class="max-w-6xl mx-auto">
+    <div class="section-label mb-3">Quick Start</div>
+    <h2 class="text-3xl md:text-4xl font-bold mb-12">快速启动指南</h2>
+
+    <div class="grid md:grid-cols-2 gap-8">
+      <div class="space-y-6">
+        <div class="card glow-box">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-sm font-bold text-cyan-400">1</div>
+            <h4 class="font-bold">安装依赖</h4>
+          </div>
+          <pre class="mono text-xs text-slate-300 bg-black/30 rounded-lg p-4 overflow-x-auto"><code>cd competitor-monitor
+pip install -r requirements.txt</code></pre>
+        </div>
+
+        <div class="card glow-box">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-sm font-bold text-purple-400">2</div>
+            <h4 class="font-bold">配置环境变量</h4>
+          </div>
+          <pre class="mono text-xs text-slate-300 bg-black/30 rounded-lg p-4 overflow-x-auto"><code>cp .env.example .env
+# 编辑 .env 填入：
+#   LLM_API_KEY    ← 你的大模型 API Key
+#   LLM_BASE_URL   ← API 地址
+#   TIKHUB_API_TOKEN ← TikHub 平台 Token
+#   WECHAT_WORK_WEBHOOK_URL ← 企微机器人地址</code></pre>
+        </div>
+
+        <div class="card glow-box">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-8 h-8 rounded-full bg-pink-500/20 flex items-center justify-center text-sm font-bold text-pink-400">3</div>
+            <h4 class="font-bold">运行</h4>
+          </div>
+          <pre class="mono text-xs text-slate-300 bg-black/30 rounded-lg p-4 overflow-x-auto"><code># 手动生成周报
+python main.py weekly 腾讯WorkBuddy
+
+# 手动执行一次监控
+python main.py monitor Claude
+
+# 启动定时调度服务
+python main.py serve</code></pre>
+        </div>
+      </div>
+
+      <div class="space-y-6">
+        <div class="card glow-box">
+          <h4 class="font-bold mb-4" style="color: var(--neon-green);">需要配置的内容</h4>
+          <div class="space-y-3 text-sm">
+            <div class="flex items-start gap-3">
+              <span class="tag bg-red-500/10 text-red-400 border border-red-500/20 shrink-0 mt-0.5">必填</span>
+              <div>
+                <div class="text-slate-200">LLM API 配置</div>
+                <div class="text-slate-500 text-xs">api_key + base_url + model（支持任意 OpenAI 兼容 API）</div>
+              </div>
+            </div>
+            <div class="flex items-start gap-3">
+              <span class="tag bg-red-500/10 text-red-400 border border-red-500/20 shrink-0 mt-0.5">必填</span>
+              <div>
+                <div class="text-slate-200">TikHub API Token</div>
+                <div class="text-slate-500 text-xs">从 tikhub.io 注册获取，用于社交媒体数据采集</div>
+              </div>
+            </div>
+            <div class="flex items-start gap-3">
+              <span class="tag bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0 mt-0.5">推荐</span>
+              <div>
+                <div class="text-slate-200">企业微信 / 飞书 / 钉钉 Webhook</div>
+                <div class="text-slate-500 text-xs">至少配置一个群机器人 Webhook URL</div>
+              </div>
+            </div>
+            <div class="flex items-start gap-3">
+              <span class="tag bg-slate-500/10 text-slate-400 border border-slate-500/20 shrink-0 mt-0.5">可选</span>
+              <div>
+                <div class="text-slate-200">GitHub Token</div>
+                <div class="text-slate-500 text-xs">提高 GitHub API 速率限制（匿名 60次/h → 认证 5000次/h）</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card glow-box">
+          <h4 class="font-bold mb-4" style="color: var(--neon-amber);">扩展方向（v2）</h4>
+          <div class="space-y-2 text-sm text-slate-400">
+            <div class="flex items-center gap-2"><span class="text-cyan-400">→</span> 新增 RSS/Discord 采集器</div>
+            <div class="flex items-center gap-2"><span class="text-cyan-400">→</span> 引入向量数据库做语义去重</div>
+            <div class="flex items-center gap-2"><span class="text-cyan-400">→</span> LangGraph 持久化检查点</div>
+            <div class="flex items-center gap-2"><span class="text-cyan-400">→</span> Web Dashboard 可视化面板</div>
+            <div class="flex items-center gap-2"><span class="text-cyan-400">→</span> 多竞品对比分析</div>
+            <div class="flex items-center gap-2"><span class="text-cyan-400">→</span> 邮件/Slack 通知渠道</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="py-12 px-4 text-center border-t border-slate-800/50">
+  <div class="mono text-xs text-slate-600">
+    Competitor Intelligence Agent MVP · Built with LangGraph + TikHub + LLM
+  </div>
+</footer>
+<script>
+gsap.registerPlugin(ScrollTrigger);
+
+// ---- Progress bar ----
+window.addEventListener('scroll', () => {
+  const h = document.documentElement;
+  const pct = (h.scrollTop / (h.scrollHeight - h.clientHeight)) * 100;
+  document.getElementById('progress-bar').style.width = pct + '%';
+});
+
+// ---- Hero entrance ----
+const heroTl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+heroTl
+  .from('#hero-content > *', { y: 40, opacity: 0, stagger: 0.12, duration: 0.8 });
+
+// ---- Scroll-triggered sections ----
+document.querySelectorAll('section:not(:first-of-type)').forEach(sec => {
+  gsap.from(sec.querySelectorAll('.card, h2, h3, p, .grid > div'), {
+    scrollTrigger: { trigger: sec, start: 'top 80%', toggleActions: 'play none none none' },
+    y: 30, opacity: 0, stagger: 0.06, duration: 0.7, ease: 'power2.out'
+  });
+});
+
+// ---- Architecture diagram entrance ----
+gsap.from('#arch-diagram .arch-node', {
+  scrollTrigger: { trigger: '#arch-diagram', start: 'top 75%' },
+  scale: 0.8, opacity: 0, stagger: 0.08, duration: 0.5, ease: 'back.out(1.4)'
+});
+
+// ---- ECharts: Data Flow Graph ----
+const flowChart = echarts.init(document.getElementById('flow-chart'), null, { renderer: 'svg' });
+
+const flowOption = {
+  backgroundColor: 'transparent',
+  tooltip: {
+    trigger: 'item',
+    backgroundColor: 'rgba(10,14,26,0.95)',
+    borderColor: 'rgba(0,240,255,0.3)',
+    textStyle: { color: '#e2e8f0', fontFamily: 'Space Grotesk, Noto Sans SC', fontSize: 12 },
+    formatter: function(p) {
+      if (p.dataType === 'node') return '<b>' + p.data.name + '</b><br>' + (p.data.desc || '');
+      return p.data.label || '';
+    }
+  },
+  series: [{
+    type: 'graph',
+    layout: 'none',
+    roam: false,
+    symbolSize: 60,
+    label: {
+      show: true,
+      fontFamily: 'Noto Sans SC',
+      fontSize: 11,
+      color: '#e2e8f0'
+    },
+    edgeLabel: {
+      show: true,
+      fontSize: 9,
+      fontFamily: 'JetBrains Mono',
+      color: '#64748b',
+      formatter: function(p) { return p.data.label || ''; }
+    },
+    lineStyle: { color: '#00f0ff', width: 2, curveness: 0.1, opacity: 0.6 },
+    emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
+    categories: [
+      { name: 'source', itemStyle: { color: '#39ff14' } },
+      { name: 'process', itemStyle: { color: '#00f0ff' } },
+      { name: 'output', itemStyle: { color: '#ff2d8a' } }
+    ],
+    data: [
+      { name: '官网\n博客', x: 80, y: 50, category: 0, desc: 'WebScraper: httpx + BeautifulSoup', symbolSize: 50 },
+      { name: '微博\n小红书', x: 80, y: 150, category: 0, desc: 'TikHub API: 国内社交平台', symbolSize: 50 },
+      { name: 'X\nYouTube', x: 80, y: 250, category: 0, desc: 'TikHub API: 海外社交平台', symbolSize: 50 },
+      { name: 'Reddit\n知乎', x: 80, y: 350, category: 0, desc: 'TikHub API + WebScraper', symbolSize: 50 },
+      { name: 'GitHub\nRelease', x: 250, y: 50, category: 0, desc: 'PyGithub: Release + Issue 监控', symbolSize: 50 },
+      { name: '并行\n采集', x: 250, y: 200, category: 1, desc: 'asyncio.gather() 并发采集所有源', symbolSize: 55, itemStyle: { color: '#a855f7' } },
+      { name: '去重\n过滤', x: 420, y: 200, category: 1, desc: 'URL + SQLite 历史去重', symbolSize: 55, itemStyle: { color: '#06b6d4' } },
+      { name: 'LLM\n分析', x: 580, y: 200, category: 1, desc: 'ChatOpenAI → 结构化分析 (JSON)', symbolSize: 60, itemStyle: { color: '#f43f5e' } },
+      { name: '即时\n简报', x: 750, y: 100, category: 2, desc: 'HIGH 优先级 → 立即推送', symbolSize: 50 },
+      { name: '周报\n汇总', x: 750, y: 200, category: 2, desc: '全量数据 → Markdown 周报', symbolSize: 50 },
+      { name: '群机器人\n推送', x: 900, y: 150, category: 2, desc: '企业微信 / 飞书 / 钉钉 Webhook', symbolSize: 55, itemStyle: { color: '#f59e0b' } },
+      { name: 'SQLite\n持久化', x: 580, y: 370, category: 1, desc: '存储原始 + 分析数据，支持历史查询', symbolSize: 45, itemStyle: { color: '#22d3ee' } },
+    ],
+    links: [
+      { source: '官网\n博客', target: '并行\n采集', label: '' },
+      { source: '微博\n小红书', target: '并行\n采集' },
+      { source: 'X\nYouTube', target: '并行\n采集' },
+      { source: 'Reddit\n知乎', target: '并行\n采集' },
+      { source: 'GitHub\nRelease', target: '并行\n采集' },
+      { source: '并行\n采集', target: '去重\n过滤', label: 'RawItem[]' },
+      { source: '去重\n过滤', target: 'LLM\n分析', label: 'new items' },
+      { source: 'LLM\n分析', target: '即时\n简报', label: 'HIGH', lineStyle: { color: '#ff2d8a' } },
+      { source: 'LLM\n分析', target: '周报\n汇总', label: 'ALL', lineStyle: { color: '#00f0ff' } },
+      { source: '即时\n简报', target: '群机器人\n推送' },
+      { source: '周报\n汇总', target: '群机器人\n推送' },
+      { source: 'LLM\n分析', target: 'SQLite\n持久化', label: 'store', lineStyle: { type: 'dashed', color: '#22d3ee' } },
+    ]
+  }]
+};
+
+flowChart.setOption(flowOption);
+window.addEventListener('resize', () => flowChart.resize());
+
+// Animate chart on scroll
+ScrollTrigger.create({
+  trigger: '#flow-chart',
+  start: 'top 80%',
+  onEnter: () => {
+    flowChart.setOption(flowOption);
+  }
+});
+</script>
+</body>
+</html>
