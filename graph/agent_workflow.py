@@ -49,10 +49,12 @@ class CompetitorMonitorAgent:
         self.notifier = CompositeNotifier()
 
         # 初始化各采集器
+        tikhub_client = TikHubClient()
         self.collectors: dict[str, BaseCollector] = {
             "web": WebScraper(),
-            "tikhub": TikHubMCPCollector(),
-            "tikhub_api": TikHubClient(),
+            "tikhub": tikhub_client,
+            "tikhub_api": tikhub_client,
+            "tikhub_mcp": TikHubMCPCollector(),
             "github": GitHubCollector(),
         }
 

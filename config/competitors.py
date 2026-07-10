@@ -48,16 +48,16 @@ class CompetitorConfig:
 
 
 TIKHUB_ENDPOINTS = {
-    "weibo": "/api/v1/weibo/search_by_keyword",
-    "xiaohongshu": "/api/v1/xiaohongshu/app_v2/search_by_keyword",
-    "zhihu": "/api/v1/zhihu/search_by_keyword",
-    "bilibili": "/api/v1/bilibili/web/search_by_keyword",
-    "douyin": "/api/v1/douyin/web/search_by_keyword",
-    "twitter": "/api/v1/twitter/web/search_by_keyword",
-    "youtube": "/api/v1/youtube/web/search_by_keyword",
-    "reddit": "/api/v1/reddit/web/search_by_keyword",
-    "instagram": "/api/v1/instagram/web/search_by_keyword",
-    "threads": "/api/v1/threads/web/search_by_keyword",
+    "weibo": "/api/v1/weibo/web_v2/fetch_realtime_search",
+    "xiaohongshu": "/api/v1/xiaohongshu/app_v2/search_notes",
+    "zhihu": "/api/v1/zhihu/web/fetch_article_search_v3",
+    "bilibili": "/api/v1/bilibili/web/fetch_general_search",
+    "douyin": "/api/v1/douyin/search/fetch_general_search_v2",
+    "twitter": "/api/v1/twitter/web/fetch_search_timeline",
+    "youtube": "/api/v1/youtube/web_v2/get_general_search_v2",
+    "reddit": "/api/v1/reddit/app/fetch_dynamic_search",
+    "instagram": "/api/v1/instagram/v2/general_search",
+    "threads": "/api/v1/threads/web/search_top",
 }
 
 

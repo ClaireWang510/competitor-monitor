@@ -5,3 +5,6 @@
 *.py[cod]
 architecture.html
 index.html
+.agents
+.venv
+/__pycache__

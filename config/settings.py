@@ -30,7 +30,10 @@ class LLMConfig(BaseModel):
 class TikHubConfig(BaseModel):
     """TikHub API 配置"""
 
-    token: str = Field(default_factory=lambda: os.getenv("TIKHUB_API_TOKEN", ""))
+    token: str = Field(
+        default_factory=lambda: os.getenv("TIKHUB_API_TOKEN")
+        or os.getenv("TIKHUB_API_KEY", "")
+    )
     base_url: str = Field(
         default_factory=lambda: os.getenv("TIKHUB_BASE_URL", "https://api.tikhub.io")
     )
