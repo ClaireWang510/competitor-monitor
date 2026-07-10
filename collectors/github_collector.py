@@ -6,6 +6,7 @@ GitHubCollector —— 监控竞品相关的 GitHub 仓库活动
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 from typing import List, Optional, Tuple
 
 from loguru import logger
@@ -72,6 +73,10 @@ class GitHubCollector(BaseCollector):
         since = cls._as_utc(since)
         return bool(normalized and since and normalized < since)
 
+    @staticmethod
+    def _first(items, limit: int):
+        return islice(items, limit)
+
     def _get_owner_repos(self, owner_name: str) -> Tuple[object, str]:
         """获取 GitHub owner 的仓库列表，兼容 organization 和 user。"""
         try:
@@ -98,10 +103,10 @@ class GitHubCollector(BaseCollector):
         items: List[RawItem] = []
         repos, _ = self._get_owner_repos(org_name)
 
-        for repo in repos[:5]:
+        for repo in self._first(repos, 5):
             try:
                 releases = repo.get_releases()
-                for rel in releases[:2]:
+                for rel in self._first(releases, 2):
                     if self._is_before_since(rel.published_at, since):
                         continue
                     items.append(
@@ -141,10 +146,10 @@ class GitHubCollector(BaseCollector):
         items: List[RawItem] = []
         repos, _ = self._get_owner_repos(org_name)
 
-        for repo in repos[:5]:
+        for repo in self._first(repos, 5):
             try:
                 commits = repo.get_commits(since=since) if since else repo.get_commits()
-                for commit in commits[:2]:
+                for commit in self._first(commits, 2):
                     committed_at = self._as_utc(commit.commit.author.date)
                     if self._is_before_since(committed_at, since):
                         continue
@@ -195,8 +200,8 @@ class GitHubCollector(BaseCollector):
         if since:
             query += f" created:>{since.strftime('%Y-%m-%d')}"
 
-        results = self.gh.search_issues(query)[:5]
-        for issue in results:
+        results = self.gh.search_issues(query)
+        for issue in self._first(results, 5):
             items.append(
                 RawItem(
                     competitor_name="",
@@ -236,7 +241,7 @@ class GitHubCollector(BaseCollector):
             order="desc",
         )
 
-        for repo in results[:5]:
+        for repo in self._first(results, 5):
             if self._is_before_since(repo.pushed_at, since):
                 continue
 
@@ -336,7 +341,7 @@ class GitHubCollector(BaseCollector):
         items: List[RawItem] = []
         try:
             repo = self.gh.get_repo(full_name)
-            for rel in repo.get_releases()[:3]:
+            for rel in self._first(repo.get_releases(), 3):
                 if self._is_before_since(rel.published_at, since):
                     continue
                 items.append(
@@ -353,7 +358,7 @@ class GitHubCollector(BaseCollector):
                     )
                 )
             commits = repo.get_commits(since=since) if since else repo.get_commits()
-            for commit in commits[:5]:
+            for commit in self._first(commits, 5):
                 committed_at = self._as_utc(commit.commit.author.date)
                 if self._is_before_since(committed_at, since):
                     continue
@@ -379,7 +384,7 @@ class GitHubCollector(BaseCollector):
                 direction="desc",
                 since=since,
             )
-            for issue in issues[:5]:
+            for issue in self._first(issues, 5):
                 updated_at = self._as_utc(issue.updated_at or issue.created_at)
                 if self._is_before_since(updated_at, since):
                     continue

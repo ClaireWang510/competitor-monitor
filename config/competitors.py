@@ -113,7 +113,7 @@ COMPETITORS: List[CompetitorConfig] = [
     CompetitorConfig(
         name="飞书 Aily",
         description="飞书旗下企业级智能体平台与官方 AI 智能伙伴，深度集成飞书工作流。",
-        search_keywords=["飞书 Aily", "飞书 aily", "飞书智能伙伴", "Feishu Aily"],
+        search_keywords=["Aily", "飞书 Aily", "飞书 aily", "飞书智能伙伴", "Feishu Aily", "飞书"],
         github_orgs=["larksuite"],
         sources=[
             web_source("飞书 Aily 官网", "https://aily.feishu.cn/"),
@@ -161,7 +161,7 @@ COMPETITORS: List[CompetitorConfig] = [
     CompetitorConfig(
         name="Manus AI",
         description="通用 AI Agent 产品，支持沙箱环境、任务自动执行和 Manus API 集成。",
-        search_keywords=["Manus AI", "Manus agent", "Manus.im", "OpenManus"],
+        search_keywords=["Manus", "Manus agent", "Manus.im", "OpenManus"],
         github_orgs=["FoundationAgents"],
         sources=[
             web_source("Manus 官网", "https://manus.im/"),
@@ -192,7 +192,7 @@ COMPETITORS: List[CompetitorConfig] = [
     CompetitorConfig(
         name="Microsoft 365 Copilot",
         description="微软面向 Microsoft 365 的企业级 Copilot 与 Agent 生态。",
-        search_keywords=["Microsoft 365 Copilot", "M365 Copilot", "Copilot Studio", "Microsoft Copilot agents"],
+        search_keywords=["Copilot", "Microsoft 365 Copilot", "M365 Copilot", "Copilot Studio", "Microsoft Copilot agents"],
         github_orgs=["microsoft"],
         sources=[
             web_source("Microsoft 365 Copilot 官网", "https://www.microsoft.com/en-us/microsoft-365/copilot"),
@@ -207,7 +207,7 @@ COMPETITORS: List[CompetitorConfig] = [
     CompetitorConfig(
         name="Skywork",
         description="Skywork AI Workspace 与 SkyworkAI 开源模型/多模态生成生态。",
-        search_keywords=["Skywork AI", "Skywork agent", "Skywork AI workspace", "SkyworkAI"],
+        search_keywords=["Skywork AI", "Skywork agent", "Skywork AI workspace", "Skywork"],
         github_orgs=["SkyworkAI"],
         sources=[
             web_source("Skywork 官网", "https://skywork.ai/"),
@@ -222,7 +222,7 @@ COMPETITORS: List[CompetitorConfig] = [
     CompetitorConfig(
         name="Claude",
         description="Anthropic 推出的大语言模型产品，以安全性、长文本和工具调用能力著称。",
-        search_keywords=["Claude AI", "Anthropic Claude", "Claude Code", "Claude API"],
+        search_keywords=["Claude", "Anthropic Claude", "Claude Code", "Claude Cowork"],
         github_orgs=["anthropics"],
         sources=[
             web_source("Claude 官网", "https://claude.ai"),
@@ -238,7 +238,7 @@ COMPETITORS: List[CompetitorConfig] = [
     CompetitorConfig(
         name="Codex",
         description="OpenAI 面向软件工程的 Codex 编码智能体与开源 CLI 生态。",
-        search_keywords=["OpenAI Codex", "Codex CLI", "ChatGPT Codex", "openai codex"],
+        search_keywords=["OpenAI Codex", "Codex CLI", "ChatGPT Codex", "codex"],
         github_orgs=["openai"],
         sources=[
             web_source("OpenAI Codex 官网", "https://openai.com/codex/"),
@@ -268,7 +268,7 @@ COMPETITORS: List[CompetitorConfig] = [
     CompetitorConfig(
         name="Make",
         description="Make 的可视化自动化平台与 Make AI Agents 能力。",
-        search_keywords=["Make AI Agents", "Make.com automation", "Make agentic automation", "MakeHQ"],
+        search_keywords=["Make AI Agents", "Make.com automation", "Make agentic automation", "Make"],
         github_orgs=["MakeHQ"],
         sources=[
             web_source("Make 官网", "https://www.make.com/en"),
