@@ -15,54 +15,68 @@ from models.data_models import AnalyzedItem, Priority, WeeklyReport
 # ============================================================
 # Markdown 周报模板
 # ============================================================
-WEEKLY_REPORT_TEMPLATE = Template("""# 📊 竞品动态周报 —— {{ competitor_name }}
+WEEKLY_REPORT_TEMPLATE = Template("""# 📊 竞品动态周报｜{{ competitor_name }}
 
 > 报告周期：{{ period_start }} ~ {{ period_end }}
 > 生成时间：{{ generated_at }}
 
 ---
 
-## 高管摘要
+## 本周概览
 
-{{ executive_summary }}
+- 监测到新动态：**{{ total_items }}** 条
+- 高优先级：**{{ high_priority_count }}** 条
+- 中优先级：**{{ medium_priority_count }}** 条
+- 低优先级：**{{ low_priority_count }}** 条
+
+## 一句话结论
+
+{{ executive_summary or "本周期暂无可归纳的核心结论。" }}
 
 ---
 
-## 关键亮点
+## 重点事项
 
 {% for h in key_highlights %}
-- **{{ h }}**
+- {{ h }}
+{% else %}
+- 暂无高价值重点事项。
 {% endfor %}
 
 ---
 
-## 详细动态
+## 高优动态
 
-### 🔴 高优先级（{{ high_priority_count }} 条）
-
-{% for item in high_items %}
+{% for item in high_items[:10] %}
 **{{ loop.index }}. {{ item.summary }}**
 - 来源：{{ item.source_name }}
 - 类型：{{ item.content_type.value }}
-- 链接：{{ item.url }}
-- 关键信号：{{ item.key_signals | join('、') }}
+- 时间：{{ item.published_at.strftime('%Y-%m-%d') if item.published_at else '未知' }}
+- 链接：[查看原文]({{ item.url }})
+- 关键信号：{{ item.key_signals | join('、') if item.key_signals else '未提取' }}
 - 影响评估：{{ item.potential_impact }}
-- 建议行动：{{ item.recommended_actions | join('；') }}
+- 建议行动：{{ item.recommended_actions | join('；') if item.recommended_actions else '人工复核' }}
 
+{% else %}
+本周期暂无高优先级动态。
 {% endfor %}
 
-### 🟡 中优先级（{{ medium_priority_count }} 条）
+---
 
-{% for item in medium_items %}
-**{{ loop.index }}. {{ item.summary }}**
-- 来源：{{ item.source_name }} | 链接：[查看]({{ item.url }})
+## 其他值得关注
 
+### 中优先级
+{% for item in medium_items[:12] %}
+- **{{ item.summary }}**｜{{ item.source_name }}｜[查看]({{ item.url }})
+{% else %}
+- 暂无中优先级动态。
 {% endfor %}
 
-### 🟢 低优先级（{{ low_priority_count }} 条）
-
-{% for item in low_items %}
-- {{ item.summary }}（[{{ item.source_name }}]({{ item.url }})）
+### 低优先级归档
+{% for item in low_items[:10] %}
+- {{ item.summary }}｜{{ item.source_name }}
+{% else %}
+- 暂无低优先级归档。
 {% endfor %}
 
 ---
@@ -77,21 +91,24 @@ WEEKLY_REPORT_TEMPLATE = Template("""# 📊 竞品动态周报 —— {{ competi
 
 ---
 
-*本报告由竞品监控 Agent 自动生成，仅供内部参考。*
+*自动生成，仅供内部参考；请以原文链接和人工复核为准。*
 """)
 
 # 即时简报模板（用于高优动态的实时推送）
-ALERT_TEMPLATE = Template("""🚨 **竞品动态提醒**
+ALERT_TEMPLATE = Template("""🚨 **竞品动态提醒｜{{ competitor_name }}**
 
-**{{ competitor_name }}** - {{ item.summary }}
+**{{ item.summary }}**
 
 - 来源：{{ item.source_name }}
 - 类型：{{ item.content_type.value }}
-- 链接：{{ item.url }}
+- 时间：{{ item.published_at.strftime('%Y-%m-%d') if item.published_at else '未知' }}
+- 链接：[查看原文]({{ item.url }})
 
 **关键信号：**
 {% for s in item.key_signals %}
 • {{ s }}
+{% else %}
+• 未提取到明确关键信号，请人工复核原文。
 {% endfor %}
 
 **影响评估：** {{ item.potential_impact }}
@@ -99,10 +116,12 @@ ALERT_TEMPLATE = Template("""🚨 **竞品动态提醒**
 **建议行动：**
 {% for a in item.recommended_actions %}
 → {{ a }}
+{% else %}
+→ 人工复核并判断是否需要跟进。
 {% endfor %}
 
 ---
-*竞品监控 Agent · 即时推送*""")
+*竞品监控 Agent · 高优先级自动推送*""")
 
 
 class ReportGenerator:
@@ -139,6 +158,8 @@ class ReportGenerator:
             generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
             total_items=report.total_items,
             high_priority_count=report.high_priority_count,
+            medium_priority_count=len(medium_items),
+            low_priority_count=len(low_items),
             high_items=high_items,
             medium_items=medium_items,
             low_items=low_items,

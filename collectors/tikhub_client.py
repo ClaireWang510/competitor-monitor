@@ -24,19 +24,19 @@ from models.data_models import RawItem
 PLATFORM_ENDPOINTS = {
     # 国内平台
     "weibo": {
-        "search": "/api/v1/weibo/search_by_keyword",
+        "search": "/api/v1/weibo/web_v2/fetch_realtime_search",
         "user_posts": "/api/v1/weibo/user_posts",
     },
     "xiaohongshu": {
-        "search": "/api/v1/xiaohongshu/app_v2/search_by_keyword",
-        "note_detail": "/api/v1/xiaohongshu/app_v2/note_detail",
+        "search": "/api/v1/xiaohongshu/app_v2/search_notes",
+        "note_detail": "/api/v1/xiaohongshu/app_v2/get_image_note_detail",
     },
     "bilibili": {
-        "search": "/api/v1/bilibili/web/search_by_keyword",
-        "video_detail": "/api/v1/bilibili/web/video_detail",
+        "search": "/api/v1/bilibili/web/fetch_general_search",
+        "video_detail": "/api/v1/bilibili/web/fetch_one_video_v3",
     },
     "zhihu": {
-        "search": "/api/v1/zhihu/search_by_keyword",
+        "search": "/api/v1/zhihu/web/fetch_article_search_v3",
     },
     "douyin": {
         "search": "/api/v1/douyin/web/search_by_keyword",
@@ -51,7 +51,7 @@ PLATFORM_ENDPOINTS = {
         "user_posts": "/api/v1/instagram/web/user_posts",
     },
     "youtube": {
-        "search": "/api/v1/youtube/web/search_by_keyword",
+        "search": "/api/v1/youtube/web_v2/get_general_search_v2",
         "video_detail": "/api/v1/youtube/web/video_detail",
     },
     "reddit": {

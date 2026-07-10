@@ -37,6 +37,23 @@ class TikHubConfig(BaseModel):
     timeout: int = 30
     max_retries: int = 3
     qps: int = 10  # TikHub 速率限制
+    mcp_base_url: str = Field(
+        default_factory=lambda: os.getenv("TIKHUB_MCP_BASE_URL", "https://mcp.tikhub.io")
+    )
+    mcp_command: str = Field(default_factory=lambda: os.getenv("TIKHUB_MCP_COMMAND", "npx"))
+    mcp_remote_package: str = Field(
+        default_factory=lambda: os.getenv("TIKHUB_MCP_REMOTE_PACKAGE", "mcp-remote")
+    )
+    mcp_timeout: int = Field(
+        default_factory=lambda: int(os.getenv("TIKHUB_MCP_TIMEOUT", "120"))
+    )
+    mcp_max_results: int = Field(
+        default_factory=lambda: int(os.getenv("TIKHUB_MCP_MAX_RESULTS", "20"))
+    )
+    mcp_insecure_tls: bool = Field(
+        default_factory=lambda: os.getenv("TIKHUB_MCP_INSECURE_TLS", "").lower()
+        in {"1", "true", "yes", "on"}
+    )
 
 
 class GitHubConfig(BaseModel):

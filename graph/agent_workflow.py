@@ -27,6 +27,7 @@ from analyzer.llm_analyzer import LLMAnalyzer
 from collectors.base import BaseCollector
 from collectors.github_collector import GitHubCollector
 from collectors.tikhub_client import TikHubClient
+from collectors.tikhub_mcp_collector import TikHubMCPCollector
 from collectors.web_scraper import WebScraper
 from config.competitors import COMPETITOR_MAP, CompetitorConfig
 from models.data_models import AgentState, AnalyzedItem, Priority, RawItem, WeeklyReport
@@ -50,7 +51,8 @@ class CompetitorMonitorAgent:
         # 初始化各采集器
         self.collectors: dict[str, BaseCollector] = {
             "web": WebScraper(),
-            "tikhub": TikHubClient(),
+            "tikhub": TikHubMCPCollector(),
+            "tikhub_api": TikHubClient(),
             "github": GitHubCollector(),
         }
 

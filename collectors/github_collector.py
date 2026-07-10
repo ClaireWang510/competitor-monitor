@@ -6,10 +6,10 @@ GitHubCollector —— 监控竞品相关的 GitHub 仓库活动
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 from collectors.base import BaseCollector
 from config.competitors import SourceConfig
@@ -17,10 +17,17 @@ from config.settings import settings
 from models.data_models import RawItem
 
 try:
-    from github import Github, GithubException
+    from github import (
+        Github,
+        GithubException,
+        RateLimitExceededException,
+        UnknownObjectException,
+    )
 except ImportError:
     Github = None
     GithubException = Exception
+    RateLimitExceededException = Exception
+    UnknownObjectException = Exception
 
 
 class GitHubCollector(BaseCollector):
@@ -31,14 +38,36 @@ class GitHubCollector(BaseCollector):
 
     def __init__(self):
         token = settings.github.token
-        self.gh = Github(token) if (Github and token) else None
+        # PyGithub 默认 retry 会在 403 rate limit 时按 reset/backoff 睡很久，
+        # 对定时监控任务来说应快速失败并交给下一轮调度重试。
+        github_kwargs = {
+            "timeout": 10,
+            "per_page": 10,
+            "retry": 0,
+        }
+        self.gh = Github(token, **github_kwargs) if (Github and token) else None
         if not self.gh:
             logger.warning(
                 "GitHubCollector: 未配置 GITHUB_TOKEN，将以匿名方式访问（速率限制 60 次/小时）"
             )
-            self.gh = Github() if Github else None
+            self.gh = Github(**github_kwargs) if Github else None
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=10))
+    def _get_owner_repos(self, owner_name: str) -> Tuple[object, str]:
+        """获取 GitHub owner 的仓库列表，兼容 organization 和 user。"""
+        try:
+            org = self.gh.get_organization(owner_name)
+            return org.get_repos(sort="updated", direction="desc"), "org"
+        except RateLimitExceededException:
+            raise
+        except UnknownObjectException:
+            user = self.gh.get_user(owner_name)
+            return user.get_repos(sort="updated", direction="desc"), "user"
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(min=2, max=10),
+        retry=retry_if_not_exception_type(RateLimitExceededException),
+    )
     async def _get_releases(
         self, org_name: str, since: Optional[datetime] = None
     ) -> List[RawItem]:
@@ -47,12 +76,12 @@ class GitHubCollector(BaseCollector):
             return []
 
         items: List[RawItem] = []
-        org = self.gh.get_organization(org_name)
+        repos, _ = self._get_owner_repos(org_name)
 
-        for repo in org.get_repos(sort="updated", direction="desc")[:10]:
+        for repo in repos[:5]:
             try:
                 releases = repo.get_releases()
-                for rel in releases[:3]:
+                for rel in releases[:2]:
                     if since and rel.published_at and rel.published_at < since:
                         continue
                     items.append(
@@ -68,13 +97,20 @@ class GitHubCollector(BaseCollector):
                             raw_metadata={"repo": repo.full_name, "tag": rel.tag_name},
                         )
                     )
+            except RateLimitExceededException:
+                logger.warning(f"GitHub: {org_name}/{repo.name} rate limit exceeded, skip")
+                break
             except Exception as e:
                 logger.debug(f"GitHub: {org_name}/{repo.name} releases error: {e}")
                 continue
 
         return items
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(min=2, max=10),
+        retry=retry_if_not_exception_type(RateLimitExceededException),
+    )
     async def _get_trending_issues(
         self, org_name: str, since: Optional[datetime] = None
     ) -> List[RawItem]:
@@ -83,11 +119,12 @@ class GitHubCollector(BaseCollector):
             return []
 
         items: List[RawItem] = []
-        query = f"org:{org_name} is:issue sort:comments-desc"
+        _, owner_kind = self._get_owner_repos(org_name)
+        query = f"{owner_kind}:{org_name} is:issue sort:comments-desc"
         if since:
             query += f" created:>{since.strftime('%Y-%m-%d')}"
 
-        results = self.gh.search_issues(query)[:10]
+        results = self.gh.search_issues(query)[:5]
         for issue in results:
             items.append(
                 RawItem(
@@ -109,6 +146,58 @@ class GitHubCollector(BaseCollector):
 
         return items
 
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(min=2, max=10),
+        retry=retry_if_not_exception_type(RateLimitExceededException),
+    )
+    async def _search_repositories(
+        self, query: str, since: Optional[datetime] = None
+    ) -> List[RawItem]:
+        """按关键词搜索近期更新的开源项目，用于捕捉社区侧信号。"""
+        if not self.gh or not query:
+            return []
+
+        items: List[RawItem] = []
+        results = self.gh.search_repositories(
+            query=query,
+            sort="updated",
+            order="desc",
+        )
+
+        for repo in results[:5]:
+            if since and repo.pushed_at and repo.pushed_at < since:
+                continue
+
+            description = repo.description or ""
+            content = (
+                f"{description}\n"
+                f"Stars: {repo.stargazers_count}; Forks: {repo.forks_count}; "
+                f"Open issues: {repo.open_issues_count}; "
+                f"Updated: {repo.pushed_at.isoformat() if repo.pushed_at else ''}"
+            ).strip()
+
+            items.append(
+                RawItem(
+                    competitor_name="",
+                    source_name=f"GitHub-Search",
+                    source_type="github_search",
+                    url=repo.html_url,
+                    title=f"[Repo] {repo.full_name}",
+                    content_snippet=content[:800],
+                    author=repo.owner.login if repo.owner else "",
+                    published_at=repo.pushed_at,
+                    raw_metadata={
+                        "repo": repo.full_name,
+                        "query": query,
+                        "stars": repo.stargazers_count,
+                        "forks": repo.forks_count,
+                    },
+                )
+            )
+
+        return items
+
     async def collect(
         self, source: SourceConfig, competitor_name: str = "", **kwargs
     ) -> List[RawItem]:
@@ -120,13 +209,45 @@ class GitHubCollector(BaseCollector):
         org_name = source.github_repo  # 此处可能是 org name 或 org/repo
         since = kwargs.get("since", datetime.utcnow() - timedelta(days=7))
 
+        if source.github_query:
+            try:
+                items = await self._search_repositories(source.github_query, since)
+            except RateLimitExceededException:
+                logger.warning(
+                    f"GitHubCollector: {source.name} rate limit exceeded, skip this round"
+                )
+                return []
+            for item in items:
+                item.competitor_name = competitor_name
+                item.source_name = source.name
+            logger.debug(
+                f"GitHubCollector: search {source.github_query} -> {len(items)} items"
+            )
+            return items
+
+        if not org_name:
+            logger.warning(f"GitHubCollector: {source.name} 未配置 github_repo 或 github_query")
+            return []
+
         # 如果是 org/repo 格式，直接针对单个仓库
         if "/" in org_name:
-            items = await self._get_single_repo_items(org_name, since)
+            try:
+                items = await self._get_single_repo_items(org_name, since)
+            except RateLimitExceededException:
+                logger.warning(
+                    f"GitHubCollector: {org_name} rate limit exceeded, skip this round"
+                )
+                return []
         else:
             # 组织级别
-            releases = await self._get_releases(org_name, since)
-            issues = await self._get_trending_issues(org_name, since)
+            try:
+                releases = await self._get_releases(org_name, since)
+                issues = await self._get_trending_issues(org_name, since)
+            except RateLimitExceededException:
+                logger.warning(
+                    f"GitHubCollector: {org_name} rate limit exceeded, skip this round"
+                )
+                return []
             items = releases + issues
 
         for item in items:
@@ -142,7 +263,7 @@ class GitHubCollector(BaseCollector):
         items: List[RawItem] = []
         try:
             repo = self.gh.get_repo(full_name)
-            for rel in repo.get_releases()[:5]:
+            for rel in repo.get_releases()[:3]:
                 if since and rel.published_at and rel.published_at < since:
                     continue
                 items.append(
@@ -158,6 +279,8 @@ class GitHubCollector(BaseCollector):
                         raw_metadata={"repo": full_name, "tag": rel.tag_name},
                     )
                 )
+        except RateLimitExceededException:
+            raise
         except Exception as e:
             logger.error(f"GitHub: {full_name} error: {e}")
         return items
