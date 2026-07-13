@@ -8,3 +8,8 @@ index.html
 .agents
 .venv
 /__pycache__
+/reports
+/scripts
+/tests
+/docs
+/.cache

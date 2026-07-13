@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Literal, Optional
 
 from loguru import logger
@@ -29,6 +30,7 @@ from collectors.base import BaseCollector
 from collectors.github_collector import GitHubCollector
 from collectors.social_account_collector import SocialAccountCollector
 from collectors.tikhub_client import TikHubClient
+from collectors.web_search_collector import WebSearchCollector
 from collectors.web_scraper import WebScraper
 from config.competitors import COMPETITOR_MAP, CompetitorConfig, SourceConfig
 from config.settings import settings
@@ -120,6 +122,7 @@ class CompetitorMonitorAgent:
         tikhub_client = TikHubClient()
         self.collectors: dict[str, BaseCollector] = {
             "web": WebScraper(),
+            "web_search": WebSearchCollector(),
             "tikhub": tikhub_client,
             "tikhub_api": tikhub_client,
             "social_accounts": SocialAccountCollector(),
@@ -134,6 +137,17 @@ class CompetitorMonitorAgent:
         sources = expand_social_sources(
             competitor, settings.tikhub.max_keywords_per_platform
         )
+        search_queries = WebSearchCollector.build_queries(
+            competitor.name, competitor.search_keywords, settings.web_search.max_queries
+        )
+        if search_queries:
+            sources.append(
+                SourceConfig(
+                    name="互联网竞品动态搜索",
+                    type="web_search",
+                    search_queries=search_queries,
+                )
+            )
         for source in sources:
             if not source.enabled:
                 continue
@@ -191,11 +205,14 @@ class CompetitorMonitorAgent:
             unique.append(item)
         return unique
 
-    async def _analyze(self, items: List[RawItem]) -> List[AnalyzedItem]:
+    async def _analyze(
+        self, items: List[RawItem], persist_incrementally: bool = False
+    ) -> List[AnalyzedItem]:
         """调用 LLM 逐条分析"""
         if not items:
             return []
-        return await self.analyzer.analyze_batch(items)
+        callback = self.storage.save_analyzed_item if persist_incrementally else None
+        return await self.analyzer.analyze_batch(items, on_result=callback)
 
     def _persist(self, raw_items: List[RawItem], analyzed_items: List[AnalyzedItem]):
         """持久化存储"""
@@ -207,6 +224,20 @@ class CompetitorMonitorAgent:
     def _extract_alerts(self, analyzed: List[AnalyzedItem]) -> List[AnalyzedItem]:
         """筛选需要即时推送的高优先级条目"""
         return [i for i in analyzed if i.priority == Priority.HIGH]
+
+    @staticmethod
+    def _save_weekly_report(competitor_name: str, markdown: str) -> Path:
+        """通知前持久化报告，避免控制台或 webhook 失败导致产物丢失。"""
+        report_dir = Path(__file__).resolve().parent.parent / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = "".join(
+            char if char.isalnum() or char in {"-", "_"} else "_"
+            for char in competitor_name
+        ).strip("_")
+        path = report_dir / f"{safe_name}_{datetime.now():%Y-%m-%d}.md"
+        path.write_text(markdown, encoding="utf-8")
+        logger.info(f"周报已保存: {path}")
+        return path
 
     # ============================================================
     # 对外暴露的两种运行模式
@@ -237,11 +268,17 @@ class CompetitorMonitorAgent:
             f"本周有效 {len(fresh_items)} 条，过期 {stale_count} 条，时间未知 {unknown_count} 条"
         )
 
-        # 2. 分析
-        analyzed = await self._analyze(fresh_items)
+        # 2. 原始结果先落库；随后合并历史未分析条目，支持中断后续跑
+        inserted = self.storage.save_raw_items(raw_items)
+        pending_items = self.storage.get_unanalyzed_raw_items_published_between(
+            competitor_name, period_start, period_end
+        )
+        logger.info(
+            f"[WeeklyReport] 原始数据新增落库 {inserted} 条；待分析 {len(pending_items)} 条"
+        )
+        analyzed = await self._analyze(pending_items, persist_incrementally=True)
 
-        # 3. 先落库，再合并实时监控在本周已积累的产品记忆
-        self._persist(raw_items, analyzed)
+        # 3. 合并实时监控在本周已积累的产品记忆
         all_this_week = self.storage.get_items_published_between(
             competitor_name, period_start, period_end
         )
@@ -262,18 +299,61 @@ class CompetitorMonitorAgent:
             ),
             items=all_this_week,
             executive_summary=summary.get("executive_summary", ""),
-            key_highlights=summary.get("key_highlights", []),
-            threat_assessment=summary.get("threat_assessment", ""),
-            opportunity_assessment=summary.get("opportunity_assessment", ""),
+            product_summary=summary.get("product_summary", ""),
+            market_summary=summary.get("market_summary", ""),
+            social_trend=summary.get("social_trend", ""),
+            open_source_summary=summary.get("open_source_summary", ""),
         )
 
         # 6. 渲染 Markdown
         md = self.reporter.generate_weekly_report_markdown(report)
+        self._save_weekly_report(competitor_name, md)
 
         # 7. 推送
         await self.notifier.send_markdown(md)
 
         logger.info(f"[WeeklyReport] {competitor_name} 周报已推送")
+        return md
+
+    async def resume_weekly_report(self, competitor_name: str) -> str:
+        """不重新采集，从数据库续跑未完成分析并重新生成周报。"""
+        if competitor_name not in COMPETITOR_MAP:
+            raise ValueError(f"未知竞品: {competitor_name}")
+
+        logger.info(f"[WeeklyResume] 从数据库恢复 {competitor_name} 周报")
+        period_end = datetime.now(timezone.utc)
+        period_start = period_end - timedelta(days=7)
+        pending_items = self.storage.get_unanalyzed_raw_items_published_between(
+            competitor_name, period_start, period_end
+        )
+        logger.info(f"[WeeklyResume] 待分析 {len(pending_items)} 条")
+        await self._analyze(pending_items, persist_incrementally=True)
+
+        all_this_week = self.storage.get_items_published_between(
+            competitor_name, period_start, period_end
+        )
+        summary = await self.analyzer.generate_weekly_summary(
+            competitor_name, all_this_week
+        )
+        report = WeeklyReport(
+            competitor_name=competitor_name,
+            period_start=period_start,
+            period_end=period_end,
+            total_items=len(all_this_week),
+            high_priority_count=sum(
+                1 for item in all_this_week if item.priority == Priority.HIGH
+            ),
+            items=all_this_week,
+            executive_summary=summary.get("executive_summary", ""),
+            product_summary=summary.get("product_summary", ""),
+            market_summary=summary.get("market_summary", ""),
+            social_trend=summary.get("social_trend", ""),
+            open_source_summary=summary.get("open_source_summary", ""),
+        )
+        md = self.reporter.generate_weekly_report_markdown(report)
+        self._save_weekly_report(competitor_name, md)
+        await self.notifier.send_markdown(md)
+        logger.info(f"[WeeklyResume] {competitor_name} 周报恢复完成")
         return md
 
     async def run_realtime_monitor(self, competitor_name: str) -> List[AnalyzedItem]:
@@ -319,9 +399,13 @@ class CompetitorMonitorAgent:
             logger.info(
                 f"[RealtimeMonitor] {competitor_name}: 发现 {len(alerts)} 条高优动态"
             )
-            for alert in alerts:
-                md = self.reporter.generate_alert_markdown(competitor_name, alert)
-                await self.notifier.send_markdown(md)
+            summary = await self.analyzer.generate_weekly_summary(
+                competitor_name, analyzed
+            )
+            md = self.reporter.generate_monitor_digest_markdown(
+                competitor_name, analyzed, summary
+            )
+            await self.notifier.send_markdown(md)
 
         return alerts
 
@@ -340,6 +424,10 @@ class CompetitorMonitorAgent:
 
     async def close(self):
         """清理资源"""
+        seen = set()
         for collector in self.collectors.values():
+            if id(collector) in seen:
+                continue
+            seen.add(id(collector))
             if hasattr(collector, "close"):
                 await collector.close()

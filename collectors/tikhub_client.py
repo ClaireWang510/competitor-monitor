@@ -27,9 +27,9 @@ from models.data_models import RawItem
 
 SEARCH_CONFIGS: dict[str, dict[str, Any]] = {
     "weibo": {
-        "endpoint": "/api/v1/weibo/web_v2/fetch_realtime_search",
-        "keyword_param": "query",
-        "defaults": {"page": 1},
+        "endpoint": "/api/v1/weibo/web/fetch_search",
+        "keyword_param": "keyword",
+        "defaults": {"page": 1, "search_type": "61", "time_scope": "week"},
     },
     "xiaohongshu": {
         "endpoint": "/api/v1/xiaohongshu/app_v2/search_notes",
@@ -47,10 +47,18 @@ SEARCH_CONFIGS: dict[str, dict[str, Any]] = {
         "defaults": {"order": "pubdate", "page": 1, "page_size": 20},
     },
     "douyin": {
-        "endpoint": "/api/v1/douyin/search/fetch_general_search_v2",
+        "endpoint": "/api/v1/douyin/search/fetch_general_search_v1",
         "method": "POST",
         "keyword_param": "keyword",
-        "defaults": {"cursor": 0},
+        "defaults": {
+            "cursor": 0,
+            "sort_type": "0",
+            "publish_time": "0",
+            "filter_duration": "0",
+            "content_type": "0",
+            "search_id": "",
+            "backtrace": "",
+        },
     },
     "twitter": {
         "endpoint": "/api/v1/twitter/web/fetch_search_timeline",
@@ -82,6 +90,35 @@ SEARCH_CONFIGS: dict[str, dict[str, Any]] = {
         "keyword_param": "query",
         "defaults": {},
     },
+}
+
+SEARCH_FALLBACKS: dict[str, tuple[dict[str, Any], ...]] = {
+    "douyin": (
+        {
+            "endpoint": "/api/v1/douyin/search/fetch_general_search_v2",
+            "method": "POST",
+            "keyword_param": "keyword",
+        },
+        {
+            "endpoint": "/api/v1/douyin/search/fetch_video_search_v1",
+            "method": "POST",
+            "keyword_param": "keyword",
+        },
+    ),
+    "instagram": (
+        {
+            "endpoint": "/api/v1/instagram/v3/general_search",
+            "method": "GET",
+            "keyword_param": "query",
+        },
+    ),
+    "threads": (
+        {
+            "endpoint": "/api/v1/threads/web/search_recent",
+            "method": "GET",
+            "keyword_param": "query",
+        },
+    ),
 }
 
 PLATFORM_ALIASES = {
@@ -123,6 +160,8 @@ CONTAINER_KEYS = (
     "timeline",
     "instructions",
     "entries",
+    "threads",
+    "aweme_info",
 )
 
 RECORD_HINT_KEYS = {
@@ -213,7 +252,9 @@ class TikHubClient(BaseCollector):
         async with self._semaphore:
             client = await self._get_client(base_url, verify=verify)
             if method.upper() == "POST":
-                resp = await client.post(endpoint, json=self._drop_empty(params))
+                # Some TikHub POST endpoints distinguish an explicitly empty
+                # first-page cursor from an omitted field.
+                resp = await client.post(endpoint, json=self._drop_none(params))
             else:
                 resp = await client.get(endpoint, params=self._drop_empty(params))
             resp.raise_for_status()
@@ -230,19 +271,31 @@ class TikHubClient(BaseCollector):
             try:
                 data = await self._request_once(base_url, endpoint, params, method=method)
                 if self._api_error(data):
-                    raise TikHubAPIError(str(data.get("message") or data.get("error")))
+                    raise TikHubAPIError(self._api_error_message(data))
                 return data
             except httpx.HTTPStatusError as exc:
                 last_error = exc
                 status = exc.response.status_code
-                if status in {401, 403, 404, 422}:
+                if status in {400, 401, 403, 404, 422}:
                     logger.warning(
-                        f"TikHub REST {base_url}{endpoint} HTTP {status}: {exc.response.text[:200]}"
+                        f"TikHub REST {base_url}{endpoint} HTTP {status}: "
+                        f"{exc.response.text[:500]}"
                     )
-                    if status in {401, 403, 422}:
-                        break
+                    # These are deterministic application/validation failures.
+                    # Retrying the same request against a mirror only duplicates
+                    # traffic; endpoint fallbacks are handled by collect().
+                    break
                 else:
-                    logger.warning(f"TikHub REST {base_url}{endpoint} HTTP {status}")
+                    body = " ".join(exc.response.text[:500].split())
+                    logger.warning(
+                        f"TikHub REST {base_url}{endpoint} HTTP {status}: {body}"
+                    )
+            except TikHubAPIError as exc:
+                # A structured TikHub business error is independent of which
+                # public mirror served it; let collect() switch endpoints.
+                last_error = exc
+                logger.warning(f"TikHub REST {base_url}{endpoint} failed: {exc}")
+                break
             except Exception as exc:
                 last_error = exc
                 if "CERTIFICATE_VERIFY_FAILED" in str(exc):
@@ -254,9 +307,7 @@ class TikHubClient(BaseCollector):
                             base_url, endpoint, params, method=method, verify=False
                         )
                         if self._api_error(data):
-                            raise TikHubAPIError(
-                                str(data.get("message") or data.get("error"))
-                            )
+                            raise TikHubAPIError(self._api_error_message(data))
                         return data
                     except Exception as insecure_exc:
                         last_error = insecure_exc
@@ -271,10 +322,40 @@ class TikHubClient(BaseCollector):
 
     @staticmethod
     def _api_error(data: Dict[str, Any]) -> bool:
-        code = data.get("code")
+        payload = data.get("detail") if isinstance(data.get("detail"), dict) else data
+        code = payload.get("code")
         if code in (None, 0, 200, "0", "200", "success", "ok"):
             return False
-        return bool(data.get("error") or data.get("message"))
+        return bool(payload.get("error") or payload.get("message"))
+
+    @staticmethod
+    def _api_error_message(data: Dict[str, Any]) -> str:
+        payload = data.get("detail") if isinstance(data.get("detail"), dict) else data
+        return str(
+            payload.get("cache_message_zh")
+            or payload.get("message_zh")
+            or payload.get("cache_message")
+            or payload.get("message")
+            or payload.get("error")
+            or "TikHub request failed"
+        )
+
+    @staticmethod
+    def _missing_result_payload(data: Dict[str, Any]) -> bool:
+        """Detect TikHub's HTTP-200 error/cache envelope with no result field."""
+        result_keys = {
+            "data",
+            "items",
+            "item_list",
+            "results",
+            "records",
+            "response",
+            "result",
+            "threads",
+        }
+        return bool(data.get("docs") or data.get("support")) and not any(
+            key in data and data.get(key) is not None for key in result_keys
+        )
 
     async def collect(
         self, source: SourceConfig, competitor_name: str = "", **kwargs
@@ -288,26 +369,46 @@ class TikHubClient(BaseCollector):
             logger.warning(f"TikHubClient: {source.name} 无法识别平台，跳过")
             return []
 
-        endpoint, params, method = self._build_request(source, platform)
-        logger.debug(
-            f"TikHub REST: [{platform}] {method} {endpoint} params={self._safe_params(params)}"
-        )
-
-        try:
-            data = await self._request(endpoint, params, method=method)
-        except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
-            if status in {401, 403}:
+        requests = self._build_requests(source, platform)
+        data: Dict[str, Any] = {}
+        for index, (endpoint, params, method) in enumerate(requests):
+            logger.debug(
+                f"TikHub REST: [{platform}] {method} {endpoint} "
+                f"params={self._safe_params(params)}"
+            )
+            try:
+                data = await self._request(endpoint, params, method=method)
+                if self._missing_result_payload(data):
+                    raise TikHubAPIError(self._api_error_message(data))
+                break
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status in {401, 403}:
+                    logger.error(
+                        f"TikHubClient: {source.name} 认证或权限失败 HTTP {status}，"
+                        "请检查 token、余额和域名"
+                    )
+                    return []
+                if index + 1 < len(requests) and status in {400, 404, 422}:
+                    logger.warning(
+                        f"TikHubClient: {source.name} 主接口失败 HTTP {status}: "
+                        f"{endpoint}，尝试备用接口 {requests[index + 1][0]}"
+                    )
+                    continue
                 logger.error(
-                    f"TikHubClient: {source.name} 认证或权限失败 HTTP {status}，请检查 token、余额和域名"
+                    f"TikHubClient: {source.name} endpoint/参数不匹配 HTTP {status}: "
+                    f"{endpoint}"
                 )
                 return []
-            if status in {404, 422}:
-                logger.error(
-                    f"TikHubClient: {source.name} endpoint/参数不匹配 HTTP {status}: {endpoint}"
-                )
+            except TikHubAPIError as exc:
+                if index + 1 < len(requests):
+                    logger.warning(
+                        f"TikHubClient: {source.name} 主接口返回业务错误: {exc}，"
+                        f"尝试备用接口 {requests[index + 1][0]}"
+                    )
+                    continue
+                logger.error(f"TikHubClient: {source.name} 接口业务错误: {exc}")
                 return []
-            raise
         items = self._parse_items(data, source, competitor_name, platform)
         if not items:
             logger.warning(
@@ -342,6 +443,38 @@ class TikHubClient(BaseCollector):
 
         return endpoint, params, method
 
+    def _build_requests(
+        self, source: SourceConfig, platform: str
+    ) -> list[tuple[str, Dict[str, Any], str]]:
+        """Build the preferred request followed by platform-compatible fallbacks."""
+        primary = self._build_request(source, platform)
+        requests = [primary]
+        keyword = self._keyword_from_params(source.tikhub_params or {})
+
+        candidates = (
+            {
+                "endpoint": SEARCH_CONFIGS.get(platform, {}).get("endpoint", ""),
+                "method": SEARCH_CONFIGS.get(platform, {}).get("method", "GET"),
+                "keyword_param": SEARCH_CONFIGS.get(platform, {}).get(
+                    "keyword_param", "keyword"
+                ),
+            },
+            *SEARCH_FALLBACKS.get(platform, ()),
+        )
+        for fallback in candidates:
+            endpoint = str(fallback["endpoint"])
+            if not endpoint or endpoint == primary[0]:
+                continue
+
+            params: dict[str, Any] = {}
+            if platform == "douyin":
+                params.update(SEARCH_CONFIGS["douyin"]["defaults"])
+            if keyword:
+                params[str(fallback.get("keyword_param", "keyword"))] = keyword
+            requests.append((endpoint, params, str(fallback.get("method", "GET"))))
+
+        return requests
+
     def _parse_items(
         self,
         data: Dict[str, Any],
@@ -374,13 +507,13 @@ class TikHubClient(BaseCollector):
         if not isinstance(payload, dict):
             return
 
+        if self._looks_like_record(payload):
+            yield payload
+            return
+
         normalized = self._unwrap_common_record(payload)
         if normalized is not payload:
             yield from self._extract_records(normalized)
-            return
-
-        if self._looks_like_record(payload):
-            yield payload
             return
 
         for key in CONTAINER_KEYS:
@@ -570,8 +703,9 @@ class TikHubClient(BaseCollector):
         if not original_id:
             return ""
         if platform == "twitter":
-            user = self._author(record)
-            return f"https://x.com/{user}/status/{original_id}" if user else f"https://x.com/i/status/{original_id}"
+            # Display names may contain spaces, emoji, or non-ASCII characters and
+            # are not valid X handles. The id-only route is stable and canonical.
+            return f"https://x.com/i/status/{original_id}"
         if platform == "youtube":
             return f"https://www.youtube.com/watch?v={original_id}"
         if platform == "instagram":
@@ -653,6 +787,10 @@ class TikHubClient(BaseCollector):
     @staticmethod
     def _drop_empty(params: dict[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in params.items() if value not in (None, "")}
+
+    @staticmethod
+    def _drop_none(params: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in params.items() if value is not None}
 
     @staticmethod
     def _safe_params(params: dict[str, Any]) -> dict[str, Any]:

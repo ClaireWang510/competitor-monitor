@@ -6,6 +6,7 @@
   python main.py monitor         # 手动执行一次实时监控
   python main.py weekly <name>   # 生成指定竞品周报（如 "腾讯WorkBuddy"）
   python main.py monitor <name>  # 监控指定竞品
+  python main.py resume-weekly <name>  # 从数据库恢复中断的周报
   python main.py serve           # 启动定时调度服务（后台持续运行）
 """
 
@@ -17,6 +18,11 @@ import sys
 from loguru import logger
 
 from config.settings import settings
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # 配置日志
 logger.remove()
@@ -51,7 +57,8 @@ async def main():
         if command == "weekly":
             if competitor_name:
                 md = await agent.run_weekly_report(competitor_name)
-                print(md)
+                if agent.notifier.notifiers:
+                    print(md)
             else:
                 await agent.run_all_competitors(mode="weekly")
 
@@ -61,6 +68,13 @@ async def main():
                 print(f"发现 {len(alerts)} 条高优动态")
             else:
                 await agent.run_all_competitors(mode="realtime")
+
+        elif command == "resume-weekly":
+            if not competitor_name:
+                raise ValueError("resume-weekly 需要指定竞品名称")
+            md = await agent.resume_weekly_report(competitor_name)
+            if agent.notifier.notifiers:
+                print(md)
 
         elif command == "serve":
             from graph.scheduler import MonitorScheduler

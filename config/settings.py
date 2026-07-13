@@ -25,6 +25,15 @@ class LLMConfig(BaseModel):
         default_factory=lambda: os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
     )
     model: str = Field(default_factory=lambda: os.getenv("LLM_MODEL", "gpt-4o"))
+    timeout_seconds: int = Field(
+        default_factory=lambda: int(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
+    )
+    max_retries: int = Field(
+        default_factory=lambda: int(os.getenv("LLM_MAX_RETRIES", "2"))
+    )
+    concurrency: int = Field(
+        default_factory=lambda: int(os.getenv("LLM_CONCURRENCY", "5"))
+    )
 
 
 class TikHubConfig(BaseModel):
@@ -72,6 +81,32 @@ class GitHubConfig(BaseModel):
     """GitHub API 配置"""
 
     token: Optional[str] = Field(default_factory=lambda: os.getenv("GITHUB_TOKEN"))
+
+
+class WebSearchConfig(BaseModel):
+    """互联网搜索配置；auto 模式优先百度，其次 Brave。"""
+
+    provider: str = Field(
+        default_factory=lambda: os.getenv("WEB_SEARCH_PROVIDER", "auto").lower()
+    )
+    baidu_api_key: str = Field(
+        default_factory=lambda: os.getenv("BAIDU_SEARCH_API_KEY", "")
+    )
+    brave_api_key: str = Field(
+        default_factory=lambda: os.getenv("BRAVE_SEARCH_API_KEY", "")
+    )
+    max_results: int = Field(
+        default_factory=lambda: int(os.getenv("WEB_SEARCH_MAX_RESULTS", "12"))
+    )
+    max_queries: int = Field(
+        default_factory=lambda: int(os.getenv("WEB_SEARCH_MAX_QUERIES", "3"))
+    )
+    fetch_pages: int = Field(
+        default_factory=lambda: int(os.getenv("WEB_SEARCH_FETCH_PAGES", "5"))
+    )
+    timeout_seconds: int = Field(
+        default_factory=lambda: int(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "30"))
+    )
 
 
 class WeChatWorkConfig(BaseModel):
@@ -126,6 +161,7 @@ class Settings(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     tikhub: TikHubConfig = Field(default_factory=TikHubConfig)
     github: GitHubConfig = Field(default_factory=GitHubConfig)
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     wechat_work: WeChatWorkConfig = Field(default_factory=WeChatWorkConfig)
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)

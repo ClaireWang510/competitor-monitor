@@ -1,174 +1,125 @@
-"""
-ReportGenerator —— 将分析结果渲染为 Markdown 周报
-使用 Jinja2 模板引擎，方便自定义格式
-"""
+"""将竞品动态渲染成简短、分类式 Markdown。"""
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List
+from typing import Dict, List
+from zoneinfo import ZoneInfo
 
 from jinja2 import Template
 
-from models.data_models import AnalyzedItem, Priority, WeeklyReport
+from models.data_models import AnalyzedItem, Priority, ReportSection, WeeklyReport
 
-# ============================================================
-# Markdown 周报模板
-# ============================================================
-WEEKLY_REPORT_TEMPLATE = Template("""# 📊 竞品动态周报｜{{ competitor_name }}
 
-> 报告周期：{{ period_start }} ~ {{ period_end }}
-> 生成时间：{{ generated_at }}
+WEEKLY_REPORT_TEMPLATE = Template("""# 竞品动态周报｜{{ competitor_name }}
 
----
+> {{ period_start }} ~ {{ period_end }} · 本周有效信号 {{ total_items }} 条
 
-## 本周概览
+## 本周概述
 
-- 监测到新动态：**{{ total_items }}** 条
-- 高优先级：**{{ high_priority_count }}** 条
-- 中优先级：**{{ medium_priority_count }}** 条
-- 低优先级：**{{ low_priority_count }}** 条
+{{ executive_summary or "本周期未发现新的有效竞品动态。" }}
+{% for section in sections %}
+## {{ section.title }}
 
-## 一句话结论
-
-{{ executive_summary or "本周期暂无可归纳的核心结论。" }}
-
----
-
-## 重点事项
-
-{% for h in key_highlights %}
-- {{ h }}
-{% else %}
-- 暂无高价值重点事项。
+{{ section.summary }}
+{% for item in section["items"] %}
+- [{{ item.summary or item.source_name }}]({{ item.url }}) · {{ item.source_name }}{% if item.published_at %} · {{ item.published_at.strftime('%m-%d') }}{% endif %}
 {% endfor %}
-
----
-
-## 高优动态
-
-{% for item in high_items[:10] %}
-**{{ loop.index }}. {{ item.summary }}**
-- 来源：{{ item.source_name }}
-- 类型：{{ item.content_type.value }}
-- 时间：{{ item.published_at.strftime('%Y-%m-%d') if item.published_at else '未知' }}
-- 链接：[查看原文]({{ item.url }})
-- 关键信号：{{ item.key_signals | join('、') if item.key_signals else '未提取' }}
-- 影响评估：{{ item.potential_impact }}
-- 建议行动：{{ item.recommended_actions | join('；') if item.recommended_actions else '人工复核' }}
-
-{% else %}
-本周期暂无高优先级动态。
 {% endfor %}
-
 ---
-
-## 其他值得关注
-
-### 中优先级
-{% for item in medium_items[:12] %}
-- **{{ item.summary }}**｜{{ item.source_name }}｜[查看]({{ item.url }})
-{% else %}
-- 暂无中优先级动态。
-{% endfor %}
-
-### 低优先级归档
-{% for item in low_items[:10] %}
-- {{ item.summary }}｜{{ item.source_name }}
-{% else %}
-- 暂无低优先级归档。
-{% endfor %}
-
----
-
-## 威胁评估
-
-{{ threat_assessment }}
-
-## 机会评估
-
-{{ opportunity_assessment }}
-
----
-
-*自动生成，仅供内部参考；请以原文链接和人工复核为准。*
+*自动汇总，仅呈现代表性动态；事实以原文链接为准。*
 """)
 
-# 即时简报模板（用于高优动态的实时推送）
-ALERT_TEMPLATE = Template("""🚨 **竞品动态提醒｜{{ competitor_name }}**
+DIGEST_TEMPLATE = Template("""🚨 **竞品动态｜{{ competitor_name }}**
 
-**{{ item.summary }}**
+{{ overview }}
+{% for section in sections %}
+**{{ section.title }}**
 
-- 来源：{{ item.source_name }}
-- 类型：{{ item.content_type.value }}
-- 时间：{{ item.published_at.strftime('%Y-%m-%d') if item.published_at else '未知' }}
-- 链接：[查看原文]({{ item.url }})
-
-**关键信号：**
-{% for s in item.key_signals %}
-• {{ s }}
-{% else %}
-• 未提取到明确关键信号，请人工复核原文。
+{{ section.summary }}
+{% for item in section["items"] %}
+- [{{ item.summary or item.source_name }}]({{ item.url }}) · {{ item.source_name }}
 {% endfor %}
-
-**影响评估：** {{ item.potential_impact }}
-
-**建议行动：**
-{% for a in item.recommended_actions %}
-→ {{ a }}
-{% else %}
-→ 人工复核并判断是否需要跟进。
 {% endfor %}
-
----
-*竞品监控 Agent · 高优先级自动推送*""")
+*本次仅推送最相关动态，事实以原文为准。*""")
 
 
 class ReportGenerator:
-    """报告生成器"""
+    SECTION_CONFIG = {
+        ReportSection.PRODUCT: ("产品与业务动态", "product_summary", 4),
+        ReportSection.MARKET: ("市场与外部报道", "market_summary", 3),
+        ReportSection.SOCIAL: ("社交媒体舆论", "social_trend", 3),
+        ReportSection.OPEN_SOURCE: ("开源社区", "open_source_summary", 4),
+    }
+
+    @staticmethod
+    def _priority(item: AnalyzedItem) -> int:
+        return {Priority.HIGH: 0, Priority.MEDIUM: 1, Priority.LOW: 2}[item.priority]
+
+    @classmethod
+    def _representative_items(
+        cls, items: List[AnalyzedItem], section: ReportSection, limit: int
+    ) -> List[AnalyzedItem]:
+        candidates = [item for item in items if item.report_section == section and item.url]
+        candidates.sort(
+            key=lambda item: (
+                cls._priority(item),
+                -(item.published_at.timestamp() if item.published_at else 0),
+            )
+        )
+        result: List[AnalyzedItem] = []
+        seen = set()
+        for item in candidates:
+            if item.url in seen:
+                continue
+            seen.add(item.url)
+            result.append(item)
+            if len(result) >= limit:
+                break
+        return result
+
+    @classmethod
+    def _sections(cls, items: List[AnalyzedItem], summaries: Dict, compact: bool = False) -> List[Dict]:
+        result = []
+        for section, (title, summary_key, limit) in cls.SECTION_CONFIG.items():
+            selected = cls._representative_items(items, section, min(limit, 2) if compact else limit)
+            summary = summaries.get(summary_key, "")
+            if not summary and not selected:
+                continue
+            result.append({"title": title, "summary": summary, "items": selected})
+        return result
 
     def generate_weekly_report_markdown(self, report: WeeklyReport) -> str:
-        """将 WeeklyReport 数据渲染为 Markdown"""
-        high_items = [i for i in report.items if i.priority == Priority.HIGH]
-        medium_items = [i for i in report.items if i.priority == Priority.MEDIUM]
-        low_items = [i for i in report.items if i.priority == Priority.LOW]
-
-        # 从 report 中提取摘要信息
-        summary_data = {}
-        if report.executive_summary:
-            summary_data = {
-                "executive_summary": report.executive_summary,
-                "key_highlights": report.key_highlights,
-                "threat_assessment": report.threat_assessment,
-                "opportunity_assessment": report.opportunity_assessment,
-            }
-        else:
-            summary_data = {
-                "executive_summary": f"本周 {report.competitor_name} 共监控到 {report.total_items} 条动态，"
-                f"其中高优先级 {report.high_priority_count} 条。",
-                "key_highlights": [i.summary for i in high_items[:3]],
-                "threat_assessment": "待分析",
-                "opportunity_assessment": "待分析",
-            }
-
+        local_tz = ZoneInfo("Asia/Shanghai")
+        summaries = {
+            "product_summary": report.product_summary,
+            "market_summary": report.market_summary,
+            "social_trend": report.social_trend,
+            "open_source_summary": report.open_source_summary,
+        }
         return WEEKLY_REPORT_TEMPLATE.render(
             competitor_name=report.competitor_name,
-            period_start=report.period_start.strftime("%Y-%m-%d"),
-            period_end=report.period_end.strftime("%Y-%m-%d"),
-            generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+            period_start=report.period_start.astimezone(local_tz).strftime("%Y-%m-%d"),
+            period_end=report.period_end.astimezone(local_tz).strftime("%Y-%m-%d"),
             total_items=report.total_items,
-            high_priority_count=report.high_priority_count,
-            medium_priority_count=len(medium_items),
-            low_priority_count=len(low_items),
-            high_items=high_items,
-            medium_items=medium_items,
-            low_items=low_items,
-            **summary_data,
-        )
+            executive_summary=report.executive_summary,
+            sections=self._sections(report.items, summaries),
+            generated_at=datetime.now(local_tz),
+        ).strip()
+
+    def generate_monitor_digest_markdown(
+        self, competitor_name: str, items: List[AnalyzedItem], summary: Dict
+    ) -> str:
+        return DIGEST_TEMPLATE.render(
+            competitor_name=competitor_name,
+            overview=summary.get("executive_summary") or f"本次发现 {len(items)} 条新动态。",
+            sections=self._sections(items, summary, compact=True),
+        ).strip()
 
     def generate_alert_markdown(self, competitor_name: str, item: AnalyzedItem) -> str:
-        """生成即时简报"""
-        return ALERT_TEMPLATE.render(
-            competitor_name=competitor_name,
-            item=item,
+        """兼容旧调用：单条提醒也使用事实摘要，不展示建议。"""
+        return self.generate_monitor_digest_markdown(
+            competitor_name,
+            [item],
+            {"executive_summary": item.detailed_analysis or item.summary},
         )

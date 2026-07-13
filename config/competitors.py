@@ -18,7 +18,7 @@ class SourceConfig:
     """单个数据源配置"""
 
     name: str  # 数据源名称，如 "官网"、"X/Twitter"
-    type: str  # 采集类型：web | tikhub | github | social_accounts | rss
+    type: str  # 采集类型：web | web_search | tikhub | github | social_accounts | rss
     url: str = ""  # 目标 URL
     # TikHub 专用字段
     tikhub_endpoint: str = ""  # TikHub API 端点路径
@@ -28,6 +28,8 @@ class SourceConfig:
     # GitHub 专用字段
     github_repo: str = ""  # 格式：owner 或 owner/repo
     github_query: str = ""  # GitHub 搜索语句，用于社区项目发现
+    # 互联网搜索专用字段
+    search_queries: List[str] = field(default_factory=list)
     # 采集频率（小时），None 表示跟随全局默认
     interval_hours: Optional[int] = None
     enabled: bool = True
@@ -48,11 +50,11 @@ class CompetitorConfig:
 
 
 TIKHUB_ENDPOINTS = {
-    "weibo": "/api/v1/weibo/web_v2/fetch_realtime_search",
+    "weibo": "/api/v1/weibo/web/fetch_search",
     "xiaohongshu": "/api/v1/xiaohongshu/app_v2/search_notes",
     "zhihu": "/api/v1/zhihu/web/fetch_article_search_v3",
     "bilibili": "/api/v1/bilibili/web/fetch_general_search",
-    "douyin": "/api/v1/douyin/search/fetch_general_search_v2",
+    "douyin": "/api/v1/douyin/search/fetch_general_search_v1",
     "twitter": "/api/v1/twitter/web/fetch_search_timeline",
     "youtube": "/api/v1/youtube/web_v2/get_general_search_v2",
     "reddit": "/api/v1/reddit/app/fetch_dynamic_search",
@@ -63,6 +65,10 @@ TIKHUB_ENDPOINTS = {
 
 def web_source(name: str, url: str) -> SourceConfig:
     return SourceConfig(name=name, type="web", url=url)
+
+
+def web_search_source(name: str, queries: List[str]) -> SourceConfig:
+    return SourceConfig(name=name, type="web_search", search_queries=queries)
 
 
 def social_source(platform: str, keyword: str, name: str | None = None) -> SourceConfig:

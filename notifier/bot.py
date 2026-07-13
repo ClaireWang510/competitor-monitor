@@ -6,6 +6,7 @@ BotNotifier —— 向工作群机器人推送消息
 
 from __future__ import annotations
 
+import sys
 import hashlib
 import hmac
 import base64
@@ -176,6 +177,8 @@ class CompositeNotifier(BaseNotifier):
     async def send_markdown(self, content: str) -> bool:
         if not self.notifiers:
             logger.warning("CompositeNotifier: 未配置任何通知渠道，仅打印到控制台")
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
             print("\n" + "=" * 60)
             print(content)
             print("=" * 60 + "\n")

@@ -19,6 +19,16 @@ class ContentType(str, Enum):
     GITHUB_ACTIVITY = "github_activity"  # GitHub 活动
     NEWS = "news"  # 新闻报道
     DOCUMENTATION = "documentation"  # 文档更新
+    BUSINESS_UPDATE = "business_update"  # 商业化、合作、客户动态
+    CUSTOMER_CASE = "customer_case"  # 客户/用户案例
+    OTHER = "other"
+
+
+class ReportSection(str, Enum):
+    PRODUCT = "product"
+    MARKET = "market"
+    SOCIAL = "social"
+    OPEN_SOURCE = "open_source"
     OTHER = "other"
 
 
@@ -53,6 +63,7 @@ class AnalyzedItem(BaseModel):
     competitor_name: str
     source_name: str
     content_type: ContentType = ContentType.OTHER
+    report_section: ReportSection = ReportSection.OTHER
     priority: Priority = Priority.MEDIUM
     summary: str = ""  # 一句话总结
     detailed_analysis: str = ""  # 详细分析
@@ -74,9 +85,14 @@ class WeeklyReport(BaseModel):
     high_priority_count: int = 0
     items: List[AnalyzedItem] = Field(default_factory=list)
     executive_summary: str = ""  # 高管摘要
+    product_summary: str = ""
+    market_summary: str = ""
+    social_trend: str = ""
+    open_source_summary: str = ""
+    # 兼容历史调用；新版报告不再展示判断性建议。
     key_highlights: List[str] = Field(default_factory=list)
-    threat_assessment: str = ""  # 威胁评估
-    opportunity_assessment: str = ""  # 机会评估
+    threat_assessment: str = ""
+    opportunity_assessment: str = ""
 
 
 class AgentState(BaseModel):
