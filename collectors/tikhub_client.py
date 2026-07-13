@@ -44,7 +44,7 @@ SEARCH_CONFIGS: dict[str, dict[str, Any]] = {
     "bilibili": {
         "endpoint": "/api/v1/bilibili/web/fetch_general_search",
         "keyword_param": "keyword",
-        "defaults": {"order": "totalrank", "page": 1, "page_size": 20},
+        "defaults": {"order": "pubdate", "page": 1, "page_size": 20},
     },
     "douyin": {
         "endpoint": "/api/v1/douyin/search/fetch_general_search_v2",
@@ -55,17 +55,22 @@ SEARCH_CONFIGS: dict[str, dict[str, Any]] = {
     "twitter": {
         "endpoint": "/api/v1/twitter/web/fetch_search_timeline",
         "keyword_param": "keyword",
-        "defaults": {"search_type": "Top"},
+        "defaults": {"search_type": "Latest"},
     },
     "youtube": {
         "endpoint": "/api/v1/youtube/web_v2/get_general_search_v2",
         "keyword_param": "keyword",
-        "defaults": {},
+        "defaults": {"need_format": True},
     },
     "reddit": {
         "endpoint": "/api/v1/reddit/app/fetch_dynamic_search",
         "keyword_param": "query",
-        "defaults": {"search_type": "posts", "sort": "relevance", "time_range": "month"},
+        "defaults": {
+            "search_type": "posts",
+            "sort": "new",
+            "time_range": "week",
+            "need_format": True,
+        },
     },
     "instagram": {
         "endpoint": "/api/v1/instagram/v2/general_search",
@@ -132,6 +137,7 @@ RECORD_HINT_KEYS = {
     "bvid",
     "bv_id",
     "video_id",
+    "videoId",
     "shortcode",
     "code",
     "url",
@@ -303,6 +309,11 @@ class TikHubClient(BaseCollector):
                 return []
             raise
         items = self._parse_items(data, source, competitor_name, platform)
+        if not items:
+            logger.warning(
+                f"TikHub REST: {source.name} 返回 0 条可解析内容；"
+                f"response_shape={self._response_shape(data)}"
+            )
         logger.debug(f"TikHub REST: {source.name} -> {len(items)} items")
         return items[: settings.tikhub.max_results]
 
@@ -375,6 +386,13 @@ class TikHubClient(BaseCollector):
         for key in CONTAINER_KEYS:
             if key in payload:
                 yield from self._extract_records(payload[key])
+
+        # Several TikHub endpoints preserve platform-specific renderer/object
+        # wrappers. Walk remaining children so a successful response is not
+        # mistaken for an empty search merely because its wrapper name changed.
+        for key, value in payload.items():
+            if key not in CONTAINER_KEYS and isinstance(value, (dict, list)):
+                yield from self._extract_records(value)
 
     @staticmethod
     def _unwrap_common_record(payload: dict[str, Any]) -> Any:
@@ -457,6 +475,7 @@ class TikHubClient(BaseCollector):
             "description",
             "caption",
             "summary",
+            "excerpt",
         )
         author = self._author(record)
         url = self._url(record, platform)
@@ -478,6 +497,7 @@ class TikHubClient(BaseCollector):
             raw_metadata={
                 "platform": platform,
                 "original_id": original_id,
+                "search_keyword": self._keyword_from_params(source.tikhub_params),
                 "via": "tikhub_rest",
             },
         )
@@ -486,9 +506,25 @@ class TikHubClient(BaseCollector):
     def _first_text(record: dict[str, Any], *keys: str) -> str:
         for key in keys:
             value = record.get(key)
-            if value is None or isinstance(value, (dict, list)):
+            if value is None:
                 continue
-            text = re.sub(r"\s+", " ", str(value)).strip()
+            if isinstance(value, dict):
+                value = (
+                    value.get("simpleText")
+                    or value.get("text")
+                    or value.get("content")
+                    or " ".join(
+                        str(run.get("text", ""))
+                        for run in value.get("runs", [])
+                        if isinstance(run, dict)
+                    )
+                )
+            elif isinstance(value, list):
+                value = " ".join(
+                    str(part.get("text", "") if isinstance(part, dict) else part)
+                    for part in value
+                )
+            text = re.sub(r"\s+", " ", str(value or "")).strip()
             if text:
                 return text
         return ""
@@ -521,6 +557,9 @@ class TikHubClient(BaseCollector):
             "permalink",
             "jump_url",
             "video_url",
+            "arcurl",
+            "uri",
+            "display_url",
         )
         if direct:
             if platform == "reddit" and direct.startswith("/"):
@@ -621,6 +660,21 @@ class TikHubClient(BaseCollector):
             key: ("***" if "token" in key.lower() or "auth" in key.lower() else value)
             for key, value in params.items()
         }
+
+    @staticmethod
+    def _response_shape(payload: Any, depth: int = 0) -> Any:
+        if depth >= 3:
+            return type(payload).__name__
+        if isinstance(payload, dict):
+            return {
+                str(key): TikHubClient._response_shape(value, depth + 1)
+                for key, value in list(payload.items())[:12]
+            }
+        if isinstance(payload, list):
+            return [
+                TikHubClient._response_shape(payload[0], depth + 1)
+            ] if payload else []
+        return type(payload).__name__
 
     @staticmethod
     def _resolve_platform(source: SourceConfig) -> str:

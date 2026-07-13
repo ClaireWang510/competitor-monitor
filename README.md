@@ -33,9 +33,14 @@
 - Codex
 - Zapier Central
 - Make
-- n8n
+- Kimi Work
+- TRAE Work
+- MiniMax Code
+- Marvis
+- QClaw
+- 阶跃 AI
 
-竞品配置位于 [config/competitors.py](config/competitors.py)。新增或调整竞品时，主要修改这里的 `COMPETITORS` 列表。
+竞品配置位于 [config/competitors.py](config/competitors.py)。新增或调整竞品时，主要修改这里的 `COMPETITORS` 列表；调研与接入步骤见 [竞品监测目标接入工作流](docs/competitor_onboarding_workflow.md)。
 
 ## 数据源能力
 
@@ -72,7 +77,7 @@
 - Instagram
 - Threads
 
-每个社交源在 [config/competitors.py](config/competitors.py) 中配置平台和关键词。采集结果会统一转成系统内部的 `RawItem`，便于后续去重和分析。
+每个社交源在 [config/competitors.py](config/competitors.py) 中配置平台，工作流会把该产品的 `search_keywords` 展开成独立查询。例如 Claude 会分别检索 `Claude`、`Anthropic Claude`、`Claude Code` 和 `Claude Cowork`，而不是把多个词拼成一个过窄的查询。每个平台默认最多使用 4 个关键词，可通过 `TIKHUB_MAX_KEYWORDS_PER_PLATFORM` 调整。采集结果会统一转成系统内部的 `RawItem`，便于后续去重和分析。
 
 ### 官方账号和关键人物账号采集
 
@@ -122,7 +127,11 @@ files/social_media_accounts.xlsx
         |
 基于 URL 和来源去重
         |
+按发布时间过滤过期内容
+        |
 调用 LLM 做结构化分析
+        |
+写入 SQLite，并按竞品汇总本周历史记忆
         |
 生成周报或筛选高优提醒
         |
@@ -169,6 +178,7 @@ LLM_MODEL=gpt-4o
 TIKHUB_API_TOKEN=your_tikhub_token
 TIKHUB_BASE_URL=https://api.tikhub.io
 TIKHUB_MAX_RESULTS=20
+TIKHUB_MAX_KEYWORDS_PER_PLATFORM=4
 ```
 
 GitHub 采集建议配置：
@@ -338,8 +348,9 @@ CompetitorConfig(
 
 当前版本仍是 MVP，适合内部试用和半自动化竞品巡检。使用时需要注意：
 
-- 周报中的“本周”并不总是严格等于发布时间属于本周；部分平台搜索结果可能按相关性返回。
-- 一些网页缺少标准发布时间，系统只能做有限解析。
+- 周报严格按原始内容的 `published_at` 筛选最近 7 天，并合并 SQLite 中实时监控在本周已经积累的同一竞品动态。
+- 一些网页缺少标准发布时间；这类内容可在实时监控中按“本轮新发现”处理，但不会进入严格按发布时间生成的周报。
+- 多关键词会增加 TikHub 请求量；可通过 `TIKHUB_MAX_KEYWORDS_PER_PLATFORM` 在召回率和调用成本之间调整。
 - 社交平台关键词搜索会带来噪声，需要 LLM 和人工共同筛选。
 - 官方账号表中如果只填写显示名，部分平台只能回退到搜索接口；填写 UID、频道 URL、用户 URL 或标准 handle 会更稳定。
 - 当前 Prompt 偏基础，能做摘要和初步优先级判断，但横向对比和深度分析还不够。

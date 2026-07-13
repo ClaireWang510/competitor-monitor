@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Optional
 
@@ -40,7 +40,9 @@ class RawItem(BaseModel):
     content_snippet: str = ""  # 正文摘要（前 500 字）
     author: str = ""
     published_at: Optional[datetime] = None
-    collected_at: datetime = Field(default_factory=datetime.utcnow)
+    collected_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     raw_metadata: Dict = Field(default_factory=dict)
 
 
@@ -65,7 +67,7 @@ class WeeklyReport(BaseModel):
     """竞品周报数据模型"""
 
     competitor_name: str
-    report_date: datetime = Field(default_factory=datetime.utcnow)
+    report_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     period_start: datetime
     period_end: datetime
     total_items: int = 0
@@ -87,4 +89,4 @@ class AgentState(BaseModel):
     alerts: List[AnalyzedItem] = Field(default_factory=list)  # 需要即时推送的高优条目
     errors: List[str] = Field(default_factory=list)
     run_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

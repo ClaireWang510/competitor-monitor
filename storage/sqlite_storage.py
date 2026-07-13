@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
 from loguru import logger
 
@@ -25,8 +26,14 @@ class SQLiteStorage:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def _get_conn(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db_path))
+    @contextmanager
+    def _get_conn(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
 
     def _init_db(self):
         """初始化表结构"""
@@ -67,8 +74,11 @@ class SQLiteStorage:
                     ON raw_items(competitor_name, collected_at);
                 CREATE INDEX IF NOT EXISTS idx_analyzed_competitor
                     ON analyzed_items(competitor_name, analyzed_at);
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_url
-                    ON raw_items(url, source_type);
+                DROP INDEX IF EXISTS idx_raw_url;
+                DROP INDEX IF EXISTS idx_raw_url_competitor;
+                CREATE UNIQUE INDEX idx_raw_url_competitor
+                    ON raw_items(url, source_type, competitor_name)
+                    WHERE url IS NOT NULL AND url <> '';
             """)
         logger.debug(f"SQLiteStorage: 数据库初始化完成 {self.db_path}")
 
@@ -145,16 +155,47 @@ class SQLiteStorage:
 
         return [self._row_to_analyzed(row) for row in rows]
 
-    def is_new_url(self, url: str, source_type: str) -> bool:
+    def get_items_published_between(
+        self,
+        competitor_name: str,
+        period_start: datetime,
+        period_end: datetime,
+    ) -> List[AnalyzedItem]:
+        """Read a product's durable weekly memory using publication time."""
+        start = self._as_utc(period_start).isoformat()
+        end = self._as_utc(period_end).isoformat()
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """SELECT * FROM analyzed_items
+                WHERE competitor_name = ?
+                  AND published_at IS NOT NULL
+                  AND datetime(published_at) >= datetime(?)
+                  AND datetime(published_at) <= datetime(?)
+                ORDER BY datetime(published_at) DESC""",
+                (competitor_name, start, end),
+            ).fetchall()
+        return [self._row_to_analyzed(row) for row in rows]
+
+    def is_new_url(
+        self, url: str, source_type: str, competitor_name: str = ""
+    ) -> bool:
         """检查 URL 是否已存在（用于去重）"""
         if not url:
             return True
         with self._get_conn() as conn:
             cursor = conn.execute(
-                "SELECT 1 FROM raw_items WHERE url = ? AND source_type = ?",
-                (url, source_type),
+                """SELECT 1 FROM raw_items
+                WHERE url = ? AND source_type = ? AND competitor_name = ?""",
+                (url, source_type, competitor_name),
             )
             return cursor.fetchone() is None
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     @staticmethod
     def _row_to_analyzed(row: sqlite3.Row) -> AnalyzedItem:

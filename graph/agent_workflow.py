@@ -18,8 +18,9 @@ AgentWorkflow —— 基于 LangGraph 的竞品监控 Agent 工作流
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
-from typing import List, Literal
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from typing import List, Literal, Optional
 
 from loguru import logger
 
@@ -30,10 +31,77 @@ from collectors.social_account_collector import SocialAccountCollector
 from collectors.tikhub_client import TikHubClient
 from collectors.web_scraper import WebScraper
 from config.competitors import COMPETITOR_MAP, CompetitorConfig, SourceConfig
+from config.settings import settings
 from models.data_models import AgentState, AnalyzedItem, Priority, RawItem, WeeklyReport
 from notifier.bot import CompositeNotifier
 from reporter.report_generator import ReportGenerator
 from storage.sqlite_storage import SQLiteStorage
+
+
+def expand_social_sources(
+    competitor: CompetitorConfig, max_keywords: int
+) -> List[SourceConfig]:
+    """Expand each TikHub platform into independent, clean keyword searches."""
+    expanded: List[SourceConfig] = []
+    for source in competitor.sources:
+        if source.type not in {"tikhub", "tikhub_api"}:
+            expanded.append(source)
+            continue
+
+        configured_keyword = str((source.tikhub_params or {}).get("keyword", "")).strip()
+        candidates = [*competitor.search_keywords, configured_keyword]
+        keywords: List[str] = []
+        seen = set()
+        for keyword in candidates:
+            keyword = keyword.strip()
+            normalized = keyword.casefold()
+            if not keyword or normalized in seen:
+                continue
+            seen.add(normalized)
+            keywords.append(keyword)
+
+        for keyword in keywords[: max(1, max_keywords)]:
+            params = dict(source.tikhub_params or {})
+            params["keyword"] = keyword
+            expanded.append(
+                replace(
+                    source,
+                    name=f"{source.name} [{keyword}]",
+                    tikhub_params=params,
+                )
+            )
+    return expanded
+
+
+def filter_items_by_publication_time(
+    items: List[RawItem],
+    period_start: datetime,
+    period_end: datetime,
+    include_unknown: bool,
+) -> tuple[List[RawItem], int, int]:
+    """Return in-window items plus counts of stale and unknown-date records."""
+    start = period_start.astimezone(timezone.utc)
+    end = period_end.astimezone(timezone.utc)
+    accepted: List[RawItem] = []
+    stale_count = 0
+    unknown_count = 0
+
+    for item in items:
+        if item.published_at is None:
+            unknown_count += 1
+            if include_unknown:
+                accepted.append(item)
+            continue
+        published = item.published_at
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        else:
+            published = published.astimezone(timezone.utc)
+        if start <= published <= end:
+            accepted.append(item)
+        else:
+            stale_count += 1
+    return accepted, stale_count, unknown_count
 
 
 class CompetitorMonitorAgent:
@@ -58,10 +126,15 @@ class CompetitorMonitorAgent:
             "github": GitHubCollector(),
         }
 
-    async def _collect_all(self, competitor: CompetitorConfig) -> List[RawItem]:
+    async def _collect_all(
+        self, competitor: CompetitorConfig, since: Optional[datetime] = None
+    ) -> List[RawItem]:
         """并行采集竞品的所有数据源"""
         tasks = []
-        for source in competitor.sources:
+        sources = expand_social_sources(
+            competitor, settings.tikhub.max_keywords_per_platform
+        )
+        for source in sources:
             if not source.enabled:
                 continue
             collector = self.collectors.get(source.type)
@@ -69,7 +142,9 @@ class CompetitorMonitorAgent:
                 logger.warning(f"未知采集类型: {source.type}，跳过")
                 continue
             tasks.append(
-                collector.safe_collect(source, competitor_name=competitor.name)
+                collector.safe_collect(
+                    source, competitor_name=competitor.name, since=since
+                )
             )
 
         account_collector = self.collectors.get("social_accounts")
@@ -108,7 +183,9 @@ class CompetitorMonitorAgent:
             )
             if key in seen:
                 continue
-            if not self.storage.is_new_url(item.url, item.source_type):
+            if not self.storage.is_new_url(
+                item.url, item.source_type, item.competitor_name
+            ):
                 continue
             seen.add(key)
             unique.append(item)
@@ -146,18 +223,28 @@ class CompetitorMonitorAgent:
 
         logger.info(f"[WeeklyReport] 开始生成 {competitor_name} 周报")
 
+        period_end = datetime.now(timezone.utc)
+        period_start = period_end - timedelta(days=7)
+
         # 1. 采集
-        raw_items = await self._collect_all(competitor)
+        raw_items = await self._collect_all(competitor, since=period_start)
         new_items = self._deduplicate(raw_items)
+        fresh_items, stale_count, unknown_count = filter_items_by_publication_time(
+            new_items, period_start, period_end, include_unknown=False
+        )
         logger.info(
-            f"[WeeklyReport] 采集到 {len(raw_items)} 条，去重后 {len(new_items)} 条新内容"
+            f"[WeeklyReport] 采集到 {len(raw_items)} 条，去重后 {len(new_items)} 条；"
+            f"本周有效 {len(fresh_items)} 条，过期 {stale_count} 条，时间未知 {unknown_count} 条"
         )
 
         # 2. 分析
-        analyzed = await self._analyze(new_items)
+        analyzed = await self._analyze(fresh_items)
 
-        # 3. 合并历史数据（本周已有的 + 新分析的）
-        all_this_week = analyzed  # MVP: 仅使用本轮分析结果
+        # 3. 先落库，再合并实时监控在本周已积累的产品记忆
+        self._persist(raw_items, analyzed)
+        all_this_week = self.storage.get_items_published_between(
+            competitor_name, period_start, period_end
+        )
 
         # 4. 生成周报摘要（LLM）
         summary = await self.analyzer.generate_weekly_summary(
@@ -167,8 +254,8 @@ class CompetitorMonitorAgent:
         # 5. 组装 WeeklyReport
         report = WeeklyReport(
             competitor_name=competitor_name,
-            period_start=datetime.utcnow() - timedelta(days=7),
-            period_end=datetime.utcnow(),
+            period_start=period_start,
+            period_end=period_end,
             total_items=len(all_this_week),
             high_priority_count=sum(
                 1 for i in all_this_week if i.priority == Priority.HIGH
@@ -183,10 +270,7 @@ class CompetitorMonitorAgent:
         # 6. 渲染 Markdown
         md = self.reporter.generate_weekly_report_markdown(report)
 
-        # 7. 持久化
-        self._persist(raw_items, analyzed)
-
-        # 8. 推送
+        # 7. 推送
         await self.notifier.send_markdown(md)
 
         logger.info(f"[WeeklyReport] {competitor_name} 周报已推送")
@@ -203,16 +287,28 @@ class CompetitorMonitorAgent:
 
         logger.info(f"[RealtimeMonitor] 开始监控 {competitor_name}")
 
-        # 1. 采集
-        raw_items = await self._collect_all(competitor)
-        new_items = self._deduplicate(raw_items)
+        period_end = datetime.now(timezone.utc)
+        period_start = period_end - timedelta(days=7)
 
-        if not new_items:
+        # 1. 采集
+        raw_items = await self._collect_all(competitor, since=period_start)
+        new_items = self._deduplicate(raw_items)
+        recent_items, stale_count, unknown_count = filter_items_by_publication_time(
+            new_items, period_start, period_end, include_unknown=True
+        )
+        if stale_count or unknown_count:
+            logger.info(
+                f"[RealtimeMonitor] {competitor_name}: 过期 {stale_count} 条，"
+                f"时间未知但按本轮新发现保留 {unknown_count} 条"
+            )
+
+        if not recent_items:
+            self._persist(raw_items, [])
             logger.info(f"[RealtimeMonitor] {competitor_name}: 无新内容")
             return []
 
         # 2. 分析
-        analyzed = await self._analyze(new_items)
+        analyzed = await self._analyze(recent_items)
 
         # 3. 持久化
         self._persist(raw_items, analyzed)

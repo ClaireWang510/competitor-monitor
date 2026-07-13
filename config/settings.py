@@ -45,6 +45,9 @@ class TikHubConfig(BaseModel):
             or os.getenv("TIKHUB_MCP_MAX_RESULTS", "20")
         )
     )
+    max_keywords_per_platform: int = Field(
+        default_factory=lambda: int(os.getenv("TIKHUB_MAX_KEYWORDS_PER_PLATFORM", "4"))
+    )
     qps: int = 10  # TikHub 速率限制
     mcp_base_url: str = Field(
         default_factory=lambda: os.getenv("TIKHUB_MCP_BASE_URL", "https://mcp.tikhub.io")
