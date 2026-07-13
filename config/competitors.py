@@ -18,13 +18,13 @@ class SourceConfig:
     """单个数据源配置"""
 
     name: str  # 数据源名称，如 "官网"、"X/Twitter"
-    type: str  # 采集类型：web | tikhub | github | rss
+    type: str  # 采集类型：web | tikhub | github | social_accounts | rss
     url: str = ""  # 目标 URL
     # TikHub 专用字段
     tikhub_endpoint: str = ""  # TikHub API 端点路径
     tikhub_params: dict = field(default_factory=dict)  # 额外请求参数
-    tikhub_platform: str = ""  # TikHub MCP 平台，如 weibo / xiaohongshu / twitter
-    tikhub_tool: str = ""  # 可选：指定 MCP tool 名称；为空时自动选择搜索工具
+    tikhub_platform: str = ""  # TikHub REST 平台，如 weibo / xiaohongshu / twitter
+    tikhub_tool: str = ""  # 兼容旧配置字段，REST 采集当前不使用
     # GitHub 专用字段
     github_repo: str = ""  # 格式：owner 或 owner/repo
     github_query: str = ""  # GitHub 搜索语句，用于社区项目发现

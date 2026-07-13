@@ -26,10 +26,10 @@ from loguru import logger
 from analyzer.llm_analyzer import LLMAnalyzer
 from collectors.base import BaseCollector
 from collectors.github_collector import GitHubCollector
+from collectors.social_account_collector import SocialAccountCollector
 from collectors.tikhub_client import TikHubClient
-from collectors.tikhub_mcp_collector import TikHubMCPCollector
 from collectors.web_scraper import WebScraper
-from config.competitors import COMPETITOR_MAP, CompetitorConfig
+from config.competitors import COMPETITOR_MAP, CompetitorConfig, SourceConfig
 from models.data_models import AgentState, AnalyzedItem, Priority, RawItem, WeeklyReport
 from notifier.bot import CompositeNotifier
 from reporter.report_generator import ReportGenerator
@@ -54,7 +54,7 @@ class CompetitorMonitorAgent:
             "web": WebScraper(),
             "tikhub": tikhub_client,
             "tikhub_api": tikhub_client,
-            "tikhub_mcp": TikHubMCPCollector(),
+            "social_accounts": SocialAccountCollector(),
             "github": GitHubCollector(),
         }
 
@@ -71,6 +71,20 @@ class CompetitorMonitorAgent:
             tasks.append(
                 collector.safe_collect(source, competitor_name=competitor.name)
             )
+
+        account_collector = self.collectors.get("social_accounts")
+        if account_collector:
+            tasks.append(
+                account_collector.safe_collect(
+                    SourceConfig(
+                        name="官方账号与关键人物账号",
+                        type="social_accounts",
+                        tikhub_params={"max_items": 20},
+                    ),
+                    competitor_name=competitor.name,
+                )
+            )
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         all_items: List[RawItem] = []

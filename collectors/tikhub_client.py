@@ -304,7 +304,7 @@ class TikHubClient(BaseCollector):
             raise
         items = self._parse_items(data, source, competitor_name, platform)
         logger.debug(f"TikHub REST: {source.name} -> {len(items)} items")
-        return items[: settings.tikhub.mcp_max_results]
+        return items[: settings.tikhub.max_results]
 
     def _build_request(
         self, source: SourceConfig, platform: str

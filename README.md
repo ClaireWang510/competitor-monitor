@@ -8,6 +8,7 @@
 
 - 多竞品监控：通过配置文件维护竞品、关键词和数据源。
 - 多渠道采集：支持网页、TikHub REST 社交搜索、GitHub 仓库动态。
+- 官方账号追踪：从账号表读取竞品官方账号和关键人物账号，采集其近期动态。
 - 自动去重：基于 URL 和来源类型去重，并写入 SQLite 历史库。
 - LLM 分析：为每条动态生成类型、优先级、摘要、影响判断和建议行动。
 - 周报生成：按竞品生成 Markdown 周报，适合每周同步。
@@ -73,6 +74,27 @@
 
 每个社交源在 [config/competitors.py](config/competitors.py) 中配置平台和关键词。采集结果会统一转成系统内部的 `RawItem`，便于后续去重和分析。
 
+### 官方账号和关键人物账号采集
+
+用于追踪竞品在各平台上的官方账号，以及关键人物账号的近期动态。
+
+实现文件：[collectors/social_account_collector.py](collectors/social_account_collector.py)
+
+账号表默认路径：
+
+```text
+files/social_media_accounts.xlsx
+```
+
+账号表当前包含两个主要 sheet：
+
+- `竞品官方账号总览`：按竞品列出各平台官方账号。
+- `关键人物账号`：按人物列出关联产品、平台、账号、URL 和备注。
+
+采集器会在每轮竞品采集时自动读取账号表，并按当前竞品名匹配对应账号。它会优先使用 TikHub 的账号/用户动态接口，例如 X 用户推文、Instagram 用户帖子、Reddit 用户或 subreddit、YouTube 频道视频等；如果账号表只提供了显示名而不是 UID、频道 ID 或精确 URL，则回退到该平台的搜索接口。
+
+`files/` 目录默认不提交到 Git，账号表可以作为本地配置维护。
+
 ### GitHub 采集
 
 用于跟踪竞品的开源项目和开发者生态。
@@ -95,6 +117,8 @@
 配置竞品和数据源
         |
 并行采集网页 / 社交平台 / GitHub
+        |
+读取账号表并采集官方账号 / 关键人物账号
         |
 基于 URL 和来源去重
         |
@@ -144,6 +168,7 @@ LLM_MODEL=gpt-4o
 ```env
 TIKHUB_API_TOKEN=your_tikhub_token
 TIKHUB_BASE_URL=https://api.tikhub.io
+TIKHUB_MAX_RESULTS=20
 ```
 
 GitHub 采集建议配置：
@@ -199,7 +224,7 @@ python main.py weekly
 python main.py monitor Coze
 ```
 
-会采集并分析 Coze 的最新动态，然后输出发现的高优先级动态数量。若存在高优内容且配置了通知渠道，会推送即时提醒。
+会采集并分析 Coze 的最新动态，包括配置的数据源、官方账号和关键人物账号，然后输出发现的高优先级动态数量。若存在高优内容且配置了通知渠道，会推送即时提醒。
 
 ### 执行全部竞品实时监控
 
@@ -307,6 +332,8 @@ CompetitorConfig(
 - `github_repo_source(repo, name)`：GitHub 组织或仓库源。
 - `github_search_source(query, name)`：GitHub 搜索源。
 
+官方账号和关键人物账号不需要写进 `CompetitorConfig.sources`，只要在 `files/social_media_accounts.xlsx` 里按竞品名维护即可。采集流程会自动为每个竞品追加账号动态采集任务。
+
 ## 当前限制
 
 当前版本仍是 MVP，适合内部试用和半自动化竞品巡检。使用时需要注意：
@@ -314,6 +341,7 @@ CompetitorConfig(
 - 周报中的“本周”并不总是严格等于发布时间属于本周；部分平台搜索结果可能按相关性返回。
 - 一些网页缺少标准发布时间，系统只能做有限解析。
 - 社交平台关键词搜索会带来噪声，需要 LLM 和人工共同筛选。
+- 官方账号表中如果只填写显示名，部分平台只能回退到搜索接口；填写 UID、频道 URL、用户 URL 或标准 handle 会更稳定。
 - 当前 Prompt 偏基础，能做摘要和初步优先级判断，但横向对比和深度分析还不够。
 - 单个数据源失败不会中断整体流程，但需要通过日志排查失败原因。
 - 高优先级判断仍需人工复核，关键事实应以原文链接为准。
@@ -343,6 +371,7 @@ competitor-monitor/
 │   ├── base.py                 # 采集器基类
 │   ├── web_scraper.py          # 网页采集
 │   ├── tikhub_client.py        # TikHub REST 社交平台采集
+│   ├── social_account_collector.py # 官方账号和关键人物账号采集
 │   └── github_collector.py     # GitHub 采集
 ├── analyzer/
 │   └── llm_analyzer.py         # LLM 结构化分析
